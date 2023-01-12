@@ -1,10 +1,12 @@
 from math import ceil
+import os.path as osp
 
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 
 
+save_root = "./results"
 rooms = ["Sf", "If", "Pf", "LC", "RC", "DC", "Rf",
          "Vf", "Sm", "Im", "Pm", "Dm", "Rm"]
 agebins = np.array([
@@ -20,9 +22,8 @@ for i, j in zip(range(nages), range(1, nages+1)):
     else:
         ages.append("[%d, %d)" % (a, b))
 
-res_t = np.load("./results/res_t.npy")
-res_yn = np.load("./results/res_yn.npy")
-# res_yp = np.load("./results/res_yp.npy")
+res_t = np.load(osp.join(save_root, "res_t.npy"))
+res_yn = np.load(osp.join(save_root, "res_yn.npy"))
 
 nt, nrooms, nages = res_yn.shape
 nc = 4
@@ -39,5 +40,6 @@ for ri in range(nrooms):
 handles, labels = ax.get_legend_handles_labels()
 fig.legend(handles, labels, loc="center right",
            ncol=1, bbox_to_anchor=(1.0, 0.5))
+fig.savefig(osp.join(save_root, "res.png"))
 # fig.tight_layout()
-plt.show()
+# plt.show()

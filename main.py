@@ -103,7 +103,9 @@ args = dict(
 
 model = SparseAgeStructedHPVModel(**args)
 print("Model init, start prediction ...")
-res_t, res_yp, res_yn = model.predict(t_span=(0, 100), backend="solve_ivp")
+res_t, res_yp, res_yn = model.predict(
+    t_span=(0, 20), backend="solve_ivp"
+)
 print("prediction complete, q = %.4f" % model.q)
 os.makedirs("./results", exist_ok=True)
 np.save("./results/res_t.npy", res_t)
