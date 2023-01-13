@@ -1,9 +1,11 @@
+import logging
+
 import numpy as np
 from scipy.integrate import odeint, solve_ivp
 from scipy import sparse as ssp
 from tqdm import tqdm
 
-from ._demographic import compute_c, compute_P, find_q_newton
+from ._demographic import compute_c, compute_fq, compute_P, find_q_newton
 from ._sexual import compute_rho
 
 
@@ -34,7 +36,10 @@ class SparseAgeStructedHPVModel:
         self,
         agebins,  # 年龄分组，第一个和最后一个必须分别是0和np.inf
         fertilities,  # 每个年龄组的生育力
-        deathes,  # 每个年龄组的死亡率
+        deathes_female,  # 女性每个年龄组的死亡率
+        deathes_male,  # 男性每个年龄组的死亡率
+        lambda_f,  # 出生婴儿女婴占比
+        lambda_m,  # 出生婴儿男婴占比
         epsilon_f,  # 女性接触HPV性伴侣被传染的概率
         epsilon_m,  # 男性接触HPV性伴侣被传染的概率
         omega_f,  # 女性每年性伴侣数量
@@ -66,7 +71,8 @@ class SparseAgeStructedHPVModel:
         gamma_RC,  # Region cancer恢复速率
         gamma_DC,  # Distant cancer恢复速率
         gamma_D,   # 男性疾病恢复速率
-        total0,  # 初始总人口数量
+        total0_f,  # 初始女性总人口数量
+        total0_m,  # 初始女性总人口数量
         q_is_zero=False,  # 是否直接设置q为0，或者利用生育力和死亡率计算q
         rtol=1e-5,
         atol=1e-5
@@ -80,14 +86,20 @@ class SparseAgeStructedHPVModel:
         assert np.isclose(agebins[0], 0.)
         assert np.isclose(agebins[-1], np.inf)
         assert len(fertilities) == nages
-        assert len(deathes) == nages
+        assert len(deathes_female) == nages
+        assert len(deathes_male) == nages
 
         self.nrooms = nrooms
+        self.nrooms_f = nrooms_female
+        self.nrooms_m = nrooms - nrooms_female
 
         self.agebins = agebins
-        # 因为我们输入的是女性生育力，而我们面向的是全人群（包括男性）
-        self.fertilities = fertilities / 2
-        self.deathes = deathes
+        self.fertilities = fertilities
+        self.deathes_female = deathes_female
+        self.deathes_male = deathes_male
+        self.lambda_f = lambda_f
+        self.lambda_m = lambda_m
+
         self.epsilon_f = epsilon_f
         self.epsilon_m = epsilon_m
         self.omega_f = omega_f
@@ -121,85 +133,105 @@ class SparseAgeStructedHPVModel:
         self.gamma_RC = gamma_RC
         self.gamma_DC = gamma_DC
         self.gamma_D = gamma_D
-        self.total0 = total0
+        # 其他参数
+        self.total0_f = total0_f
+        self.total0_m = total0_m
         self.q_is_zero = q_is_zero,
 
+        # --- 1. 人口学模型参数的估计 ---
         self.agedelta = self.agebins[1:] - self.agebins[:-1]
-        # TODO: q=0时需要对出生率进行调整
         # TODO: 我们是不是需要将cancer和disease所导致的死亡也加入到deathes中
-        # TODO: 为什么生育率减半后，q变成负值了，也就是人在减少？？
-        #   或者，创建一个因疾病死亡的仓室，来储存这些死亡的人数
-        self.q = 0. if q_is_zero else find_q_newton(self.fertilities,
-                                                    self.deathes,
-                                                    self.agedelta)[0]
-        self.c = compute_c(self.deathes, self.q, self.agedelta)
-        self.P = compute_P(total0, self.deathes, self.q, self.c)
-        CP = self.c[:-1] * self.P[:-1] / self.P[1:]
-        born = 0.5 * (self.P * self.fertilities).sum() / self.P[0]
-        dcq = deathes + self.c + self.q
+        # TODO: 或者，创建一个因疾病死亡的仓室，来储存这些死亡的人数
+        if q_is_zero:
+            # NOTE: 当令q=0时，需要对所有的生育率进行调整，使之依然服从方程
+            self.q = 0.
+            factor = compute_fq(self.deathes_female,
+                                self.fertilities, 0.,
+                                self.agedelta,
+                                lam=self.lambda_f)[0] + 1
+            logging.info("[init] fertilities adjust factor: %.4f" % (1/factor))
+            self.fertilities /= factor
+        else:
+            self.q = find_q_newton(
+                self.lambda_f,
+                self.fertilities,
+                self.deathes_female,
+                self.agedelta
+            )[0]
+            logging.info("[init] q is %.4f" % self.q)
+        self.c_f = compute_c(self.deathes_female, self.q, self.agedelta)
+        self.c_m = compute_c(self.deathes_male, self.q, self.agedelta)
+        self.P_f = compute_P(total0_f, self.deathes_female, self.q, self.c_f)
+        self.P_m = compute_P(total0_m, self.deathes_male, self.q, self.c_m)
+        CP_f = self.c_f[:-1] * self.P_f[:-1] / self.P_f[1:]
+        CP_m = self.c_m[:-1] * self.P_m[:-1] / self.P_m[1:]
+        born = (self.P_f * self.fertilities).sum() / self.P_f[0]
+        born_f = self.lambda_f * born
+        born_m = self.lambda_m * born
+        dcq_f = self.deathes_female + self.c_f + self.q
+        dcq_m = self.deathes_male + self.c_m + self.q
         self.rho = compute_rho(agebins, 10, 0.05, 100, (13, 60))
         self.nages = nages
 
-        # TODO: 男女使用相同的死亡率？？？
         # 依次是：Sf, If, Pf, LCf, RCf, DCf, Rf, Vf, Sm, Im, Pm, Dm, Rm
         # self._matrix = np.zeros((n, n), dtype=float)
         # 出生人数
         self._ii, self._jj, self._data = construct_coo_component([
             # Sf
             ((0, nages*6), nages, phi, None),
-            ((0, 0), nages, -(psi*tau+dcq), CP),
+            ((0, 0), nages, -(psi*tau+dcq_f), CP_f),
             # If
             ((nages, nages), nages,
-             -(beta_P*theta_I+(1-beta_P)*gamma_I+dcq), CP),
+             -(beta_P*theta_I+(1-beta_P)*gamma_I+dcq_f), CP_f),
             # Pf
             ((nages*2, nages), nages, beta_P*theta_I, None),
             ((nages*2, nages*2), nages,
-             -(beta_LC*theta_P+(1-beta_LC)*gamma_P+dcq), CP),
+             -(beta_LC*theta_P+(1-beta_LC)*gamma_P+dcq_f), CP_f),
             # LC
             ((nages*3, nages*2), nages, beta_LC*theta_P, None),
             ((nages*3, nages*3), nages,
-             -(beta_RC*theta_LC+dL*eta_L+(1-dL-beta_RC)*gamma_LC+dcq), CP),
+             -(beta_RC*theta_LC+dL*eta_L+(1-dL-beta_RC)*gamma_LC+dcq_f), CP_f),
             # RC
             ((nages*4, nages*3), nages, beta_RC*theta_LC, None),
             ((nages*4, nages*4), nages,
-             -(beta_DC*theta_RC+dR*eta_R+(1-dR-beta_DC)*gamma_RC+dcq), CP),
+             -(beta_DC*theta_RC+dR*eta_R+(1-dR-beta_DC)*gamma_RC+dcq_f), CP_f),
             # DC
             ((nages*5, nages*4), nages, beta_DC*theta_RC, None),
             ((nages*5, nages*5), nages,
-             -(dD*eta_D+(1-dD)*gamma_DC+dcq), CP),
+             -(dD*eta_D+(1-dD)*gamma_DC+dcq_f), CP_f),
             # Rf
             ((nages*6, nages), nages, (1-beta_P)*gamma_I, None),
             ((nages*6, nages*2), nages, (1-beta_LC)*gamma_P, None),
             ((nages*6, nages*3), nages, (1-beta_RC-dL)*gamma_LC, None),
             ((nages*6, nages*4), nages, (1-beta_DC-dR)*gamma_RC, None),
             ((nages*6, nages*5), nages, (1-dD)*gamma_DC, None),
-            ((nages*6, nages*6), nages, -(phi+dcq), CP),
+            ((nages*6, nages*6), nages, -(phi+dcq_f), CP_f),
             # Vf
             ((nages*7, 0), nages, tau*psi, None),
-            ((nages*7, nages*7), nages, -dcq, CP),
+            ((nages*7, nages*7), nages, -dcq_f, CP_f),
             # Sm
             ((nages*8, nages*12), nages, phi, None),
-            ((nages*8, nages*8), nages, -dcq, CP),
+            ((nages*8, nages*8), nages, -dcq_m, CP_m),
             # Im
             ((nages*9, nages*9), nages,
-             -(beta_P*theta_I+(1-beta_P)*gamma_I+dcq), CP),
+             -(beta_P*theta_I+(1-beta_P)*gamma_I+dcq_m), CP_m),
             # Pm
             ((nages*10, nages*9), nages, beta_P*theta_I, None),
             ((nages*10, nages*10), nages,
-             -(beta_D*theta_P+(1-beta_D)*gamma_P+dcq), CP),
+             -(beta_D*theta_P+(1-beta_D)*gamma_P+dcq_m), CP_m),
             # Dm
             ((nages*11, nages*10), nages, beta_D*theta_P, None),
             ((nages*11, nages*11), nages,
-             -(beta_dm*theta_D+(1-beta_dm)*gamma_D+dcq), CP),
+             -(beta_dm*theta_D+(1-beta_dm)*gamma_D+dcq_m), CP_m),
             # Rm
             ((nages*12, nages*9), nages, (1-beta_P)*gamma_I, None),
             ((nages*12, nages*10), nages, (1-beta_D)*gamma_P, None),
             ((nages*12, nages*11), nages, (1-beta_dm)*gamma_D, None),
-            ((nages*12, nages*12), nages, -(phi+dcq), CP),
+            ((nages*12, nages*12), nages, -(phi+dcq_m), CP_m),
         ])
         self._ii = np.r_[self._ii, 0, nages * nrooms_female]
         self._jj = np.r_[self._jj, 0, 0]
-        self._data = np.r_[self._data, born, born]
+        self._data = np.r_[self._data, born_f, born_m]
 
     def df_dt(self, t, X):
         nages = self.nages
@@ -244,11 +276,12 @@ class SparseAgeStructedHPVModel:
         assert backend in ["solve_ivp", "odeint"]
         if init is None:
             init = np.zeros(self.ndim)
-            Pprop = self.P / self.total0
-            init[0:self.nages] = 0.45 * Pprop
-            init[self.nages:(self.nages*2)] = 0.05*Pprop
-            init[(self.nages*8):(self.nages*9)] = 0.45*Pprop
-            init[(self.nages*9):(self.nages*10)] = 0.05*Pprop
+            Pprop_f = self.P_f / self.total0_f
+            Pprop_m = self.P_m / self.total0_m
+            init[0:self.nages] = 0.25 * Pprop_f
+            init[self.nages:(self.nages*2)] = 0.25*Pprop_f
+            init[(self.nages*8):(self.nages*9)] = 0.25*Pprop_m
+            init[(self.nages*9):(self.nages*10)] = 0.25*Pprop_m
 
         if backend == "solve_ivp":
             with tqdm(total=1000, unit="‰") as pbar:
@@ -274,6 +307,9 @@ class SparseAgeStructedHPVModel:
         for i in range(0, self.ndim, self.nages):
             y_.append(y[:, i:(i+self.nages)])
         yp = np.stack(y_, axis=1)  # nt x nrooms x nages
-        Nt = self.P * np.exp(self.q*t)[:, None]
-        yn = yp * Nt[:, None]
+        Nt = np.concatenate([
+            np.tile(self.P_f, (self.nrooms_f, 1)),
+            np.tile(self.P_m, (self.nrooms_m, 1)),
+        ]) * np.exp(self.q * t)[:, None, None]
+        yn = yp * Nt
         return t, yp, yn

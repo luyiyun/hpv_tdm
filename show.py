@@ -23,9 +23,9 @@ for i, j in zip(range(nages), range(1, nages+1)):
         ages.append("[%d, %d)" % (a, b))
 
 res_t = np.load(osp.join(save_root, "res_t.npy"))
-res_yn = np.load(osp.join(save_root, "res_yn.npy"))
+res_y = np.load(osp.join(save_root, "res_yn.npy"))
 
-nt, nrooms, nages = res_yn.shape
+nt, nrooms, nages = res_y.shape
 nc = 4
 nr = ceil(nrooms / nc)
 fig, axs = plt.subplots(nrows=nr, ncols=nc, figsize=(3*nc, 3*nr))
@@ -34,7 +34,7 @@ for ri in range(nrooms):
     i, j = ri // nc, ri % nc
     ax = axs[i, j]
     for ai in range(nages):
-        ax.plot(res_t, res_yn[:, ri, ai], label=ages[ai], color=colors[ai])
+        ax.plot(res_t, res_y[:, ri, ai], label=ages[ai], color=colors[ai])
     ax.set_title(rooms[ri])
 
 handles, labels = ax.get_legend_handles_labels()
