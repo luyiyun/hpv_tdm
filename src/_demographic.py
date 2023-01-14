@@ -1,13 +1,22 @@
 import random
 import logging
+import warnings
 
 import numpy as np
 
 
+warn_msg = "RuntimeWarning: invalid value encountered in true_divide"
+
+
 def compute_c(d, q, delta):
     dq = d + q
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore",
+                                message=warn_msg,
+                                category=RuntimeWarning)
+        res = dq / (np.exp(dq*delta)-1)
+    # NOTE: 通过极限运算，可以得到当dq=0时，最终结果应该是1/delta
     mask = (dq == 0.)
-    res = dq / (np.exp(dq*delta)-1)
     res[mask] = 1. / delta[mask]
     return res
 
@@ -31,8 +40,13 @@ def _compute_df_dq(d, m, q, delta, lam, compute_fq_intermediater):
     cdq_ = cdq[:-1]
     f_ = f[:-1]
 
-    dc_dq = (c_ - c_** 2 * delta_) / dq_ - c_ * delta_
-    dc_dq[dq_ == 0.] = -0.5  # 通过极限运算得到的
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore",
+                                message=warn_msg,
+                                category=RuntimeWarning)
+        dc_dq = (c_ - c_** 2 * delta_) / dq_ - c_ * delta_
+    # NOTE: 通过极限运算，可以得到当dq_=0时，最终结果应该是-1/2
+    dc_dq[dq_ == 0.] = -0.5
     df_dc = f[:, None] * (dq_/(c_*cdq_))
     row, col = np.triu_indices_from(df_dc, 0)
     df_dc[row, col] = 0
