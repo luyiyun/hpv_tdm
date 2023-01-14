@@ -106,6 +106,8 @@ class AgeGenderModel:
             logging.info("[init] q is %.4f" % self.q)
         self.c_f = compute_c(self.deathes_female, self.q, self.agedelta)
         self.c_m = compute_c(self.deathes_male, self.q, self.agedelta)
+        # NOTE: 这个P_f和P_m就是初始总人口，因为P_f.sum()和P_m.sum()正好就是
+        # NOTE: total0_f和total0_m
         self.P_f = compute_P(total0_f, self.deathes_female, self.q, self.c_f)
         self.P_m = compute_P(total0_m, self.deathes_male, self.q, self.c_m)
         self.dc_f = self.deathes_female + self.c_f

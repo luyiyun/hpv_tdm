@@ -6,7 +6,8 @@ import hydra
 from omegaconf import DictConfig
 
 # from src import AgeGenderModel
-from src import AgeGenderHPVModel1
+# from src import AgeGenderHPVModel1
+from src import AgeGenderHPVModel2
 
 
 logging.basicConfig(level=logging.INFO,
@@ -17,11 +18,15 @@ logging.basicConfig(level=logging.INFO,
 def main(cfg: DictConfig):
     
     logging.info("[main] Model init ... ")
-    model = AgeGenderHPVModel1()
+    model = AgeGenderHPVModel2(
+        psi=np.array([0] * 5 + [1.0] + [0]*20),  # 更早接种疫苗
+        tau=0.921,
+    )
     #
     logging.info("[main] start prediction ...")
     # init = np.random.randint(1000, 10000, size=(52,))
-    init = np.random.randint(100, 1000, size=(model.ndim,))
+    # init = np.random.randint(100, 1000, size=(model.ndim,))
+    init = model.get_init([0.8, 0.2]+[0]*6+[0.8, 0.2, 0, 0])
     t, y = model.predict(init=init, t_span=(0, 100), backend="solve_ivp")
 
     logging.info("[main] saving results ...")

@@ -106,11 +106,6 @@ class AgeGenderHPVModel1(AgeGenderModel):
         CP_f = self.c_f[:-1] #  * self.P_f[:-1] / self.P_f[1:]
         CP_m = self.c_m[:-1] #  * self.P_m[:-1] / self.P_m[1:]
 
-        __import__('ipdb').set_trace()
-
-        self.born = (self.P_f * self.fertilities).sum() / self.P_f[0]
-        self.born_f = self.lambda_f * self.born
-        self.born_m = self.lambda_m * self.born
         dcq_f = self.dc_f + self.q
         dcq_m = self.dc_m + self.q
         self.rho = compute_rho(self.agebins, 10, 0.05, 100, (13, 60))
@@ -192,10 +187,6 @@ class AgeGenderHPVModel1(AgeGenderModel):
             ((self.nages*12, self.nages*12), self.nages,
              -(self.phi+dcq_m), CP_m),
         ])
-        # 出生人口加上
-        self._ii = np.r_[self._ii, 0, self.nages * self.nrooms_f]
-        self._jj = np.r_[self._jj, 0, 0]
-        self._data = np.r_[self._data, self.born_f, self.born_m]
 
     def df_dt(self, _, X):
         nages = self.nages
@@ -221,6 +212,12 @@ class AgeGenderHPVModel1(AgeGenderModel):
         matrix = ssp.coo_matrix((data_new, (ii_new, jj_new)),
                                 shape=(self.ndim, self.ndim)).tocsr()
         res = matrix.dot(X)
+        # NOTE: 之前的做法是错的。。
+        # 加上出生人口
+        born = np.dot(Ntf, self.fertilities)
+        born_f, born_m = born * self.lambda_f, born * self.lambda_m
+        res[0] += born_f
+        res[self.nages*self.nrooms_f] += born_m
         return res
 
     def _reshpae_out(self, y):
