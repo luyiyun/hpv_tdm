@@ -26,6 +26,8 @@ defaults_parameters = dict(
     partner_window=10,
     # 性接触矩阵，每隔一个年龄段的递降幅度
     partner_decline=0.05,
+    # 性接触矩阵，性活动界限
+    partner_interval=(13, 60),
 
     # 自然抗体丢失速率 (未知)
     phi=1/5,  # 假设是3-5年
@@ -76,7 +78,7 @@ class AgeGenderHPVModel2(AgeGenderModel):
         4. 加入了对于rho（性接触矩阵）的参数
     """
 
-    def __init__(self, **kwargs):
+    def __init__(self, cal_cumulate=False, **kwargs):
 
         base_kwargs = {}
         for name in base_dp.keys():
@@ -88,6 +90,8 @@ class AgeGenderHPVModel2(AgeGenderModel):
             if key in kwargs:
                 value = kwargs[key]
             setattr(self, key, value)
+
+        self.cal_cumulate = cal_cumulate
 
         # 一些数量设置
         self.nrooms = 12
@@ -103,9 +107,11 @@ class AgeGenderHPVModel2(AgeGenderModel):
         self.rho = compute_rho(self.agebins,
                                self.partner_window,
                                self.partner_decline,
-                               100, (13, 60))
+                               100, self.partner_interval)
 
     def df_dt(self, _, X):
+        if self.cal_cumulate:
+            X = X[:self.ndim]
         Xre = X.reshape(self.nrooms, self.nages)
         Ntf = Xre[:self.nrooms_f, :].sum(axis=0)
         Ntm = Xre[self.nrooms_f:, :].sum(axis=0)
@@ -163,9 +169,31 @@ class AgeGenderHPVModel2(AgeGenderModel):
         res = np.concatenate([dSf, dIf, dPf, dLC, dRC, dDC, dRf, dVf,
                               dSm, dIm, dPm, dRm])
 
+        if self.cal_cumulate:
+            cR2S_f = self.phi*Rf
+            cS2I_f = alpha_f*Sf
+            cI2P_f = self.beta_I*If
+            cP2LC_f = self.beta_P*Pf
+            cLC2RC_f = self.beta_LC*LC
+            cRC2DC_f = self.beta_RC*RC
+            cLC2d_f = self.dL*LC
+            cRC2d_f = self.dR*RC
+            cDC2d_f = self.dD*DC
+            cS2V_f = self.psi*self.tau*Sf
+            cres = np.concatenate([
+                cR2S_f, cS2I_f, cI2P_f, cP2LC_f, cLC2RC_f, cRC2DC_f,
+                cLC2d_f, cRC2d_f, cDC2d_f, cS2V_f
+            ])
+            res = np.concatenate([res, cres])
+
         return res
 
     def _reshpae_out(self, y):
+        if self.cal_cumulate:
+            y, ycum = y[:, :self.ndim], y[:, self.ndim:]
+            y = y.reshape(-1, self.nrooms, self.nages)
+            ycum = ycum.reshape(-1, 10, self.nages)
+            return y, ycum
         return y.reshape(-1, self.nrooms, self.nages)
 
     def plot(self, t, y, plot_process=True, plot_dist=True):
@@ -211,5 +239,42 @@ class AgeGenderHPVModel2(AgeGenderModel):
         init_f = room_prop_f[:, None] * self.P_f
         init_m = room_prop_m[:, None] * self.P_m
         res = np.concatenate([init_f, init_m]).flatten()
+        if self.cal_cumulate:
+            res = np.concatenate([res, np.zeros(self.nages*10)])
         return res
+
+    def plot_cumulative(self, t, ycum, plot_process=True, plot_dist=True):
+        rooms = np.array([
+            "Recovery", "Infected", "Persisted",
+            "Localized Cancer", "Regional Cancer",
+            "Distant Cancer", "Deathed LC", "Deathed RC", "Deathed DC",
+            "Vaccined"
+        ])
+        nt, nrooms, nages = ycum.shape
+        df = pd.DataFrame({
+            "y": ycum.flatten(),
+            "t": np.repeat(t, nrooms*nages),
+            "room": np.tile(np.repeat(rooms, nages), nt),
+            "age": pd.Categorical(
+                np.tile(self.agebin_names, nt*nrooms),
+                categories=self.agebin_names, ordered=True
+            )
+        })
+        fgs = {}
+        if plot_process:
+            fgs["process"] = sns.relplot(
+                data=df, x="t", y="y", hue="age",
+                col="room", col_wrap=3, aspect=1, kind="line",
+                facet_kws={"sharey": False}
+            )
+        if plot_dist:
+            fgs["dist"] = sns.relplot(
+                data=df, x="age", y="y", hue="t",
+                col="room", col_wrap=3, aspect=1.5, kind="line",
+                facet_kws={"sharey": False}
+            )
+            fgs["dist"].set_xticklabels(rotation=45)
+        for fg in fgs.values():
+            fg.set_titles("{col_name}")
+        return fgs
 
