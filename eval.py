@@ -17,26 +17,31 @@ logging.basicConfig(level=logging.INFO,
                     format="[%(levelname)s][%(asctime)s]%(message)s")
 
 
-def cal_incidence(y, model):
+def cal_incidence(y, ycum, model, method="oneyear"):
     nrooms_f = model.nrooms_f
-    Ntf = y[:, :nrooms_f, :].sum(axis=1)
-    Ntm = y[:, nrooms_f:, :].sum(axis=1)
-    Sf, If, Pf = y[:, 0], y[:, 1], y[:, 2]
-    Sm, Im, Pm = y[:, 0], y[:, nrooms_f+1], y[:, nrooms_f+2]
+    if method == "oneyear":
+        # 1年发病率
+        cum_cecx = ycum[:, 3].sum(axis=1)
+        delta_cecx = cum_cecx[1:] - cum_cecx[:-1]
+        nfemale = y[:, :nrooms_f].sum(axis=(1, 2))
+        nfemale = (nfemale[1:] +nfemale[:-1]) / 2
+        incidence = delta_cecx / nfemale
+        # 保证等长度，后面的程序不用修改
+        incidence = np.r_[incidence[0], incidence]
+    elif method == "instant":
+        # 瞬时发病率
+        Pf = y[:, 2]
+        DeltaLC = model.beta_P * Pf
+        incidence = DeltaLC.sum(axis=1) / y[:, :nrooms_f].sum(axis=(1, 2))
+    else:
+        raise NotImplementedError
 
-    # 计算一下alpha（感染率）
-    iPf = (If + Pf) / Ntf
-    iPm = (Im + Pm) / Ntm
-    alpha_f_age = model.epsilon_f * model.omega_f * (iPm @ model.rho.T)
-    alpha_m_age = model.epsilon_m * model.omega_m * (iPf @ model.rho.T)
-
-    alpha_f_all = (alpha_f_age * Sf).sum(axis=1) / Sf.sum(axis=1)
-    alpha_m_all = (alpha_m_age * Sm).sum(axis=1) / Sm.sum(axis=1)
-
-    return {
-        "female": alpha_f_all, "male": alpha_m_all,
-        # "female_age": alpha_f_age, "male_age": alpha_m_age
-    }
+    logging.info("%s incidence rate is :" % method)
+    inds = np.linspace(incidence.shape[0] * 0.2, incidence.shape[0]-1, num=10)
+    inds = inds.astype(int)
+    for ind, value in zip(inds, incidence[inds]):
+        logging.info("%d=%.6f" % (ind, value))
+    return incidence
 
 
 def cost_utility_analysis(
@@ -78,12 +83,11 @@ def load_and_calculate(root):
 
     # 2.计算指标
     ltable = life_table(model.deathes_female, model.agebins)
-    incidences = cal_incidence(y, model)
+    incidences = cal_incidence(y, ycum, model)
     cost_utilities = cost_utility_analysis(ycum, ltable)
 
     # 3.整理成dataframe
-    incidences["t"] = t
-    df_inci = pd.DataFrame(incidences)
+    df_inci = pd.DataFrame({"t": t, "incidence": incidences})
     cost_utilities["t"] = t
     df_cu = pd.DataFrame(cost_utilities)
  
@@ -91,19 +95,15 @@ def load_and_calculate(root):
 
 
 def plot_incidence(df_tar, df_ref=None):
-    df_tar = df_tar.melt(id_vars="t",
-                         var_name="gender", value_name="incidence")
     if df_ref is None:
         fg = sns.relplot(data=df_tar, x="t", y="incidence",
-                         hue="gender", kind="line", aspect=2)
+                         kind="line", aspect=2)
     else:
-        df_ref = df_ref.melt(id_vars="t",
-                             var_name="gender", value_name="incidence")
         df_tar["group"] = "target"
         df_ref["group"] = "reference"
         df_plot = pd.concat([df_tar, df_ref], axis=0)
         fg = sns.relplot(data=df_plot, x="t", y="incidence",
-                         hue="group", col="gender", kind="line", aspect=1.5)
+                         hue="group", kind="line", aspect=2)
     # fg.refline(y=4/100000, color="red", linestyle="--")
     fg.set(yscale="log")
     fg.savefig("./incidence.png")
