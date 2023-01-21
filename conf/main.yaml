@@ -2,5 +2,4 @@ hydra:
   job:
     chdir: true
   run:
-    dir: ./results/${now:%Y-%m-%d}/${now:%H-%M-%S}
-
+    dir: ./results/${now:%Y-%m-%d}/run_${now:%H-%M-%S}

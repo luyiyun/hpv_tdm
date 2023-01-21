@@ -78,13 +78,13 @@ class AgeGenderHPVModel2(AgeGenderModel):
         4. 加入了对于rho（性接触矩阵）的参数
     """
 
-    def __init__(self, cal_cumulate=False, **kwargs):
+    def __init__(self, cal_cumulate=False, verbose=True, **kwargs):
 
         base_kwargs = {}
         for name in base_dp.keys():
             if name in kwargs:
                 base_kwargs[name] = kwargs[name]
-        super().__init__(**base_kwargs)
+        super().__init__(**base_kwargs, verbose=verbose)
 
         for key, value in defaults_parameters.items():
             if key in kwargs:
@@ -277,4 +277,3 @@ class AgeGenderHPVModel2(AgeGenderModel):
         for fg in fgs.values():
             fg.set_titles("{col_name}")
         return fgs
-

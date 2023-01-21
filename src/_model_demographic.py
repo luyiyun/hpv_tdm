@@ -1,7 +1,9 @@
 import logging
+from copy import deepcopy
 
 import numpy as np
 import pandas as pd
+from pandas.core.dtypes.common import is_period_dtype
 import seaborn as sns
 from scipy.integrate import odeint, solve_ivp
 from tqdm import tqdm
@@ -54,9 +56,9 @@ class AgeGenderModel:
         total0_m=500000,  # 初始女性总人口数量
         q_is_zero=True,  # 是否直接设置q为0，或者利用生育力和死亡率计算q
         rtol=1e-5,
-        atol=1e-5
+        atol=1e-5,
+        verbose=True
     ):
-
         self.agebins = np.array(agebins) if agebins is not None else \
             defaults_parameters["agebins"]
         self.fertilities = np.array(fertilities) if fertilities is not None \
@@ -94,8 +96,11 @@ class AgeGenderModel:
                                 self.fertilities, 0.,
                                 self.agedelta,
                                 lam=self.lambda_f)[0] + 1
-            logging.info("[init] fertilities adjust factor: %.4f" % (1/factor))
-            self.fertilities /= factor
+            if verbose:
+                logging.info("[init] fertilities adjust factor: %.4f" %
+                             (1/factor))
+            # NOTE: 不然运行多次时，会直接使用到之前的fertilities
+            self.fertilities = self.fertilities / factor
         else:
             self.q = find_q_newton(
                 self.lambda_f,
@@ -103,7 +108,8 @@ class AgeGenderModel:
                 self.deathes_female,
                 self.agedelta
             )[0]
-            logging.info("[init] q is %.4f" % self.q)
+            if verbose:
+                logging.info("[init] q is %.4f" % self.q)
         self.c_f = compute_c(self.deathes_female, self.q, self.agedelta)
         self.c_m = compute_c(self.deathes_male, self.q, self.agedelta)
         # NOTE: 这个P_f和P_m就是初始总人口，因为P_f.sum()和P_m.sum()正好就是
@@ -139,14 +145,22 @@ class AgeGenderModel:
 
         return self.df_dt(t, X)
 
-    def predict(self, init, t_span, t_eval=None, backend="solve_ivp"):
+    def predict(
+            self, init, t_span, t_eval=None, backend="solve_ivp", verbose=True
+        ):
         assert backend in ["solve_ivp", "odeint"]
         if backend == "solve_ivp":
-            with tqdm(total=1000, unit="‰") as pbar:
+            if verbose:
+                with tqdm(total=1000, unit="‰") as pbar:
+                    res = solve_ivp(
+                        self.df_dt_pbar, t_span=t_span, y0=init,
+                        t_eval=t_eval, rtol=self.rtol, atol=self.atol,
+                        args=[pbar, [t_span[0], (t_span[1]-t_span[0]) / 1000]]
+                    )
+            else:
                 res = solve_ivp(
-                    self.df_dt_pbar, t_span=t_span, y0=init,
+                    self.df_dt, t_span=t_span, y0=init,
                     t_eval=t_eval, rtol=self.rtol, atol=self.atol,
-                    args=[pbar, [t_span[0], (t_span[1]-t_span[0]) / 1000]]
                 )
             t = res.t
             y = res.y.T
@@ -198,4 +212,3 @@ class AgeGenderModel:
         for fg in fgs.values():
             fg.set_titles("{col_name}")
         return fgs
-

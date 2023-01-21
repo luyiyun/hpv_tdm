@@ -17,7 +17,7 @@ logging.basicConfig(level=logging.INFO,
 def main(cfg: DictConfig):
 
     logging.info("[main] CWD is %s" % os.getcwd())
-    
+
     logging.info("[main] Model init ... ")
     model = AgeGenderHPVModel2(
         cal_cumulate=True,
@@ -29,8 +29,8 @@ def main(cfg: DictConfig):
     logging.info("[main] start prediction ...")
     # 我国人群HPV率是13.1-18.8%
     init = model.get_init([0.85, 0.15]+[0]*6+[0.85, 0.15, 0, 0])
-    t, y = model.predict(init=init, t_span=(0, 500),
-                         t_eval=np.arange(500), backend="solve_ivp")
+    t, y = model.predict(init=init, t_span=(0, 100),
+                         t_eval=np.arange(100), backend="solve_ivp")
     if model.cal_cumulate:
         y, ycum = y
 
@@ -54,4 +54,3 @@ def main(cfg: DictConfig):
 
 if __name__ == "__main__":
     main()
-
