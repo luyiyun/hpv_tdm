@@ -28,18 +28,22 @@ logging.basicConfig(level=logging.INFO,
 
 class ObjectiveFunction:
 
-    def __init__(self, ltable, ref_cost_utilities, return_plot_res=False) -> None:
+    def __init__(
+        self, ltable, ref_cost_utilities, return_plot_res=False,
+        constraint_weight=1.
+    ) -> None:
         self.ltable = ltable
         self.ref_cu = ref_cost_utilities
         self.return_plot_res = return_plot_res
+        self.constraint_weight = constraint_weight
 
     def __call__(self, trial: optuna.Trial) -> float:
         # 得到参数
-        target_age = trial.suggest_categorical("target_age", tuple(range(26)))
+        target_age = trial.suggest_categorical("target_age", tuple(range(13)))
         target_vacc = trial.suggest_categorical(
             "target_vacc", ["dom2", "imp2", "imp9"]
         )
-        coverage  = trial.suggest_float("coverage", low=0.5, high=1)
+        coverage  = trial.suggest_float("coverage", low=0.1, high=1)
 
         res_all = self.calculate_by_parameters(target_age,
                                                target_vacc,
@@ -48,9 +52,11 @@ class ObjectiveFunction:
             return res_all
 
         inci, _, icer = res_all[-3:]
-        trial.set_user_attr("c0", inci[-10:].mean() - 4e-5)
+        trial.set_user_attr(
+            "c0", (np.median(inci[-10:]) - 4e-5) * self.constraint_weight
+        )
 
-        return icer[-10:].mean()
+        return np.median(icer[-10:])
 
     def calculate_by_parameters(self, target_age, target_vacc, coverage):
         # 根据参数进行设置
@@ -113,7 +119,8 @@ def main(cfg: DictConfig):
                                 storage=storage_name,
                                 sampler=sampler,
                                 load_if_exists=True)
-    objective = ObjectiveFunction(ref_ltable, ref_cu)
+    objective = ObjectiveFunction(ref_ltable, ref_cu,
+                                  constraint_weight=cfg.constraint_weight)
     study.optimize(objective, n_trials=cfg.n_trials)
     # 单独保存
     with open("sampler.pkl", "wb") as fout:
@@ -127,8 +134,13 @@ def main(cfg: DictConfig):
             logging.info("  %s: %d" % (k, v))
         else:
             logging.info("  %s: %s" % (k, v))
-    logging.info("constraints: incidences = %.6f" %
-                 (study.best_trial.user_attrs["c0"] + 4e-5))
+    logging.info(
+        "constraints: incidences = %.6f" %
+        (
+            study.best_trial.user_attrs["c0"] / objective.constraint_weight
+            + 4e-5
+        )
+    )
 
     logging.info("plotting best results...")
     new_obj_func = ObjectiveFunction(ref_ltable, ref_cu, True)
@@ -161,6 +173,15 @@ def main(cfg: DictConfig):
                      x="t", y="ICER", aspect=2, kind="line")
     # fg.set(yscale="log")
     fg.savefig("./ICER_vs_%s.png" % cfg.reference.replace("/", "-"))
+
+    # 绘制一下模型的进展图
+    fgs = tar_model.plot(tar_t, tar_y)
+    for key, fg in fgs.items():
+        fg.savefig("plot_%s.png" % key)
+    if tar_model.cal_cumulate:
+        fgs = tar_model.plot_cumulative(tar_t, tar_ycum)
+        for key, fg in fgs.items():
+            fg.savefig("plot_%s_cum.png" % key)
 
 
 if __name__ == "__main__":
