@@ -2,10 +2,13 @@ hydra:
   job:
     chdir: true
   run:
-    dir: ./results/opt_res_10
+    dir: ./results/opt_res_m100_6
 
-
+seed: 1234
 res_root: /home/luyiyun/Documents/hpv_tdm/results
-reference: 2023-01-21/run_18-16-56
-n_trials: 5000
-constraint_weight: 1000.
+reference: ref_100_2
+n_trials: 500
+constraint_weight: null  # 1.
+
+t_span: [0, 100]
+n_eval: 100

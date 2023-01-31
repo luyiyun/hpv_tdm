@@ -32,7 +32,7 @@ def cal_incidence(y, ycum, model, method="oneyear", verbose=True):
 
 
 def cost_utility_analysis(
-    ycum, life_table, cost_per_vacc=55, cost_per_cecx=650,
+    ycum, life_table, cost_per_vacc=55, cost_per_cecx=7547,
     DALY_nofatal=0.76, DALY_fatal=0.86
 ):
     # 分为两个部分：疫苗接种花费和癌症治疗花费
@@ -61,7 +61,14 @@ def cost_utility_analysis(
 
 
 def cal_icer(cu_tar, cu_ref):
-    return (cu_tar["cost_all"] - cu_ref["cost_all"]) / (
-        cu_ref["DALY_nodeath"] + cu_ref["DALY_death"] + cu_ref["LifeLoss"] -
-        cu_tar["DALY_nodeath"] - cu_tar["DALY_death"] - cu_tar["LifeLoss"]
-    )
+    # NOTE: 使用asarray，不管是ndarray还是series，都转换成了ndarray
+    tar_cost = np.asarray(cu_tar["cost_all"])
+    ref_cost = np.asarray(cu_ref["cost_all"])
+    ref_daly = np.asarray(cu_ref["DALY_nodeath"]) + \
+            np.asarray(cu_ref["DALY_death"]) + \
+            np.asarray(cu_ref["LifeLoss"])
+    tar_daly = np.asarray(cu_tar["DALY_nodeath"]) + \
+            np.asarray(cu_tar["DALY_death"]) + \
+            np.asarray(cu_tar["LifeLoss"])
+
+    return (tar_cost - ref_cost) / (ref_daly - tar_daly)

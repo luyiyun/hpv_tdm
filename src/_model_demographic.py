@@ -1,9 +1,7 @@
 import logging
-from copy import deepcopy
 
 import numpy as np
 import pandas as pd
-from pandas.core.dtypes.common import is_period_dtype
 import seaborn as sns
 from scipy.integrate import odeint, solve_ivp
 from tqdm import tqdm
@@ -53,7 +51,7 @@ class AgeGenderModel:
         lambda_f=None,  # 出生婴儿女婴占比
         lambda_m=None,  # 出生婴儿男婴占比
         total0_f=500000,  # 初始女性总人口数量
-        total0_m=500000,  # 初始女性总人口数量
+        total0_m=500000,  # 初始男性总人口数量
         q_is_zero=True,  # 是否直接设置q为0，或者利用生育力和死亡率计算q
         rtol=1e-5,
         atol=1e-5,

@@ -2,4 +2,7 @@ hydra:
   job:
     chdir: true
   run:
-    dir: ./results/${now:%Y-%m-%d}/run_${now:%H-%M-%S}
+    dir: ./results/ref_100_2
+
+t_span: [0, 100]
+n_eval: 100

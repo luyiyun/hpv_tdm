@@ -21,6 +21,8 @@ def main(cfg: DictConfig):
     logging.info("[main] Model init ... ")
     model = AgeGenderHPVModel2(
         cal_cumulate=True,
+        total0_f=500000,
+        total0_m=500000,
         # psi=np.array([0] * 5 + [1.0, 1.0, 1.0] + [0]*18),  # 更早接种疫苗
         # tau=1.0,
         # partner_interval=(15, 60)
@@ -29,8 +31,11 @@ def main(cfg: DictConfig):
     logging.info("[main] start prediction ...")
     # 我国人群HPV率是13.1-18.8%
     init = model.get_init([0.85, 0.15]+[0]*6+[0.85, 0.15, 0, 0])
-    t, y = model.predict(init=init, t_span=(0, 100),
-                         t_eval=np.arange(100), backend="solve_ivp")
+    t, y = model.predict(
+        init=init, t_span=(cfg.t_span[0], cfg.t_span[1]),
+        t_eval=np.linspace(cfg.t_span[0], cfg.t_span[1], cfg.n_eval),
+        backend="solve_ivp"
+    )
     if model.cal_cumulate:
         y, ycum = y
 
