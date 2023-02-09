@@ -2,13 +2,26 @@ hydra:
   job:
     chdir: true
   run:
-    dir: ./results/opt_res_m100_6
+    dir: ./results/opt_res_m100_one_agespan011_bigpopulation_adj_mortality_fixcecx  # _vaccprefer
 
 seed: 1234
 res_root: /home/luyiyun/Documents/hpv_tdm/results
-reference: ref_100_2
+reference: ref_100_bigpopulation_adj_mortality
 n_trials: 500
 constraint_weight: null  # 1.
 
 t_span: [0, 100]
 n_eval: 100
+
+cu_kwargs:
+  cost_per_cecx: 7547
+  DALY_nofatal: 0.76
+  DALY_fatal: 0.86
+
+tdm_kwargs:
+  total0_f: 713510000
+  total0_m: 681870000
+  vacc_prefer: false
+
+search_strategy: "one"  # one, multi, conti, contiOneCover
+n_vacc_ages: 2  # 只有multi才用到

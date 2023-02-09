@@ -1,8 +1,0 @@
-hydra:
-  job:
-    chdir: true
-  run:
-    dir: ./results/ref_100_2
-
-t_span: [0, 100]
-n_eval: 100

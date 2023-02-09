@@ -1,0 +1,17 @@
+hydra:
+  job:
+    chdir: true
+  run:
+    dir: ./results/ref_100_bigpopulation_adj_mortality
+    # dir: ./results/ref_warmup_1000_adj_mortality
+
+
+init: "../ref_warmup_1000_adj_mortality"
+# init: null
+
+t_span: [0, 100]
+n_eval: 100
+
+total0_f: 713510000
+total0_m: 681870000
+vacc_prefer: true  # 应该是没有影响的
