@@ -2,21 +2,26 @@ hydra:
   job:
     chdir: true
   run:
-    dir: ./results/opt_res_m100_one_agespan011_bigpopulation_adj_mortality_fixcecx  # _vaccprefer
+    dir: ./results/opt_res_m50_disc
 
 seed: 1234
-res_root: /home/luyiyun/Documents/hpv_tdm/results
-reference: ref_100_bigpopulation_adj_mortality
+# res_root: /home/luyiyun/Documents/hpv_tdm/results
+# reference: ref_100_bigpopulation_adj_mortality
 n_trials: 500
-constraint_weight: null  # 1.
+inci_thre: 4e-5
+# constraint_weight: null  # 1.
 
-t_span: [0, 100]
-n_eval: 100
+# t_span: [0, 100]
+# n_eval: 100
 
-cu_kwargs:
+eval_kwargs:
+  init: "../ref_warmup/last.npy"
+  t_span: [0, 50]
+  n_eval: 51
   cost_per_cecx: 7547
-  DALY_nofatal: 0.76
+  DALY_nofatal: 0.52
   DALY_fatal: 0.86
+  discount_rate: 0.03
 
 tdm_kwargs:
   total0_f: 713510000

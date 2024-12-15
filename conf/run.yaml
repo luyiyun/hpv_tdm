@@ -2,16 +2,22 @@ hydra:
   job:
     chdir: true
   run:
-    dir: ./results/ref_100_bigpopulation_adj_mortality
+    # dir: ./results/ref_100_bigpopulation_adj_mortality
     # dir: ./results/ref_warmup_1000_adj_mortality
+    # dir: ./results/ref_warmup
+    dir: ./results/ref_100
 
 
-init: "../ref_warmup_1000_adj_mortality"
+# init: "../ref_warmup_1000_adj_mortality"
 # init: null
+init: ../ref_warmup/last.npy
 
 t_span: [0, 100]
 n_eval: 100
 
 total0_f: 713510000
 total0_m: 681870000
-vacc_prefer: true  # 应该是没有影响的
+vacc_prefer: false  # 应该是没有影响的
+disc_rate: 0.03
+
+save_last: true

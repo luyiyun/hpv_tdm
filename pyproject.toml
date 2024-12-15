@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools", "cython", "setuptools-scm"]  # 如果使用setup.py并且其中需要运行的包，都需要放在这里
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hpv_tdm"
+authors = [
+  {name = "Rong Zhiwei", email = "rongzhiwei@bjmu.edu.cn"}
+]
+description = ""
+keywords = ["hpv", "vaccine", "transmission dynamic models", "bayesian optimization"]
+license = {file = "LICENSE"}
+requires-python = ">=3.10"
+readme = "readme.md"
+dependencies = [
+  "numpy==1.26.0",
+  "scipy==1.10.0",
+  "pandas==1.5.0",
+  "matplotlib",
+  "seaborn",
+  "optuna==3.1.0",
+  "ipython",
+  "ipdb",
+  "hydra-core",
+  "h5py",
+  "tables",
+  "openpyxl"
+]
+dynamic = ["version"]
+[project.optional-dependencies]
+develop = [
+    "lifelines",
+]
+
+[tool.setuptools.packages]
+find = {where = ["src"], namespaces = true}  # namespaces=false will prevent any folder without an __init__.py file
+
+[tool.setuptools_scm]
+# can be empty if no extra settings are needed, presence enables setuptools_scm

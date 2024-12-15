@@ -576,6 +576,11 @@ class AgeGenderHPVModel2(AgeGenderModel):
         init_f = room_prop_f[:, None] * self.P_f
         init_m = room_prop_m[:, None] * self.P_m
         res = np.concatenate([init_f, init_m]).flatten()
-        if self.cal_cumulate:
-            res = np.concatenate([res, np.zeros(self.nages*10)])
         return res
+
+    def predict(
+        self, init, t_span, t_eval=None, backend="solve_ivp", verbose=True
+    ):
+        if self.cal_cumulate:
+            init = np.concatenate([init, np.zeros(self.nages*10)])
+        return super().predict(init, t_span, t_eval, backend, verbose)

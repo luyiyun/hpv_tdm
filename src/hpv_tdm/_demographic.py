@@ -6,17 +6,21 @@ import numpy as np
 
 def compute_c(d, q, delta):
     dq = d + q
-    res = dq / (np.exp(dq*delta)-1)
     # NOTE: 通过极限运算，可以得到当dq=0时，最终结果应该是1/delta
-    mask = (dq == 0.)
-    res[mask] = 1. / delta[mask]
+    # 使用dvide代替/运算符，避免除0警告
+    res = np.divide(
+        d, np.exp(dq * delta) - 1, out=1.0 / delta, where=dq != 0.0
+    )
+    # res = dq / (np.exp(dq * delta) - 1)
+    # mask = dq == 0.0
+    # res[mask] = 1.0 / delta[mask]
     return res
 
 
-def compute_fq(d, m, q, delta, lam=1.):
+def compute_fq(d, m, q, delta, lam=1.0):
     c = compute_c(d, q, delta)
     cdq = c + d + q
-    c_cdq = np.r_[1., c[:-1]] / cdq
+    c_cdq = np.r_[1.0, c[:-1]] / cdq
     c_cdq_prod = np.cumprod(c_cdq)  # fi
     res = lam * np.sum(m * c_cdq_prod) - 1, (c, cdq, c_cdq, c_cdq_prod)
     return res
@@ -32,18 +36,19 @@ def _compute_df_dq(d, m, q, delta, lam, compute_fq_intermediater):
     cdq_ = cdq[:-1]
     f_ = f[:-1]
 
-    dc_dq = (c_ - c_** 2 * delta_) / dq_ - c_ * delta_
+    dc_dq = (c_ - c_**2 * delta_) / dq_ - c_ * delta_
     # NOTE: 通过极限运算，可以得到当dq_=0时，最终结果应该是-1/2
-    dc_dq[dq_ == 0.] = -0.5
-    df_dc = f[:, None] * (dq_/(c_*cdq_))
+    dc_dq[dq_ == 0.0] = -0.5
+    df_dc = f[:, None] * (dq_ / (c_ * cdq_))
     row, col = np.triu_indices_from(df_dc, 0)
     df_dc[row, col] = 0
-    df_dc[range(n-1), range(n-1)] = - f_ / cdq_
+    df_dc[range(n - 1), range(n - 1)] = -f_ / cdq_
 
-    df_dq = -f * np.cumsum(1/cdq)
+    df_dq = -f * np.cumsum(1 / cdq)
     df_dq_all = np.dot(df_dc, dc_dq) + df_dq
     res = lam * np.sum(df_dq_all * m)
     return res
+
 
 def compute_P(total0, d, q, c):
     c_cdq = c[:-1] / (c[1:] + d[1:] + q)
@@ -98,8 +103,14 @@ def compute_P(total0, d, q, c):
 
 
 def find_q_newton(
-    lam, fertilities, deathes, agedelta, max_iter=100, tol=1e-8, q_init=0.,
-    verbose=False
+    lam,
+    fertilities,
+    deathes,
+    agedelta,
+    max_iter=100,
+    tol=1e-8,
+    q_init=0.0,
+    verbose=False,
 ):
     d = deathes
     m = fertilities

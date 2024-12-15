@@ -16,7 +16,7 @@ def find_proper_gamma_parameter(agebins, omega, n_trials=500):
         # p = sst.skewnorm.cdf(agebins, a, loc, scale)
         # p = sst.beta.cdf(agebins, a=a, b=b, loc=loc, scale=scale)
         p = p[1:] - p[:-1]
-        return np.sum((p - omega)**2)
+        return np.sum((p - omega) ** 2)
 
     study = optuna.create_study()
     study.optimize(objective_find_gamma_parameter, n_trials=n_trials)
@@ -28,10 +28,10 @@ def compute_rho(
     agebins, sex_window=10, decline_rate=0.05, n=100, bounds=(13, 60)
 ):
     mat = np.eye(n)
-    for i in range(1, sex_window+1):
-        row = np.arange(0, n-i)
+    for i in range(1, sex_window + 1):
+        row = np.arange(0, n - i)
         col = np.arange(i, n)
-        tmp = 1 - decline_rate*i
+        tmp = 1 - decline_rate * i
         mat[row, col] = tmp
         mat[col, row] = tmp
     l, u = bounds
@@ -47,7 +47,12 @@ def compute_rho(
         for c, (coli, colj) in enumerate(zip(agebins[:-1], agebins[1:])):
             mat2[r, c] = mat[rowi:rowj, coli:colj].sum()
 
-    mat2 = mat2 / mat2.sum(axis=1, keepdims=True)
-    mat2 = np.nan_to_num(mat2, 0.)
+    # 使用divide函数而非/运算符，避免出现除0警告
+    mat2_edge = mat2.sum(axis=1, keepdims=True)
+    mat2 = np.divide(
+        mat2, mat2_edge, out=np.zeros_like(mat2), where=mat2_edge != 0
+    )
+    # mat2 = mat2 / mat2.sum(axis=1, keepdims=True)
+    # mat2 = np.nan_to_num(mat2, 0.0)
 
     return mat2
