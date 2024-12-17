@@ -1161,7 +1161,7 @@ def figure_budget(
                     edgecolor="black",
                 )
             elif plot_kind == "line":
-                ax.plot(x, y, "o-", label=panel, color=colors[i])
+                ax.plot(x, y, ".-", label=panel, color=colors[i])
         ax.set_title(feature_name)
         ax.legend()
 
@@ -1528,82 +1528,83 @@ def main():
     #     colors=list(jama_palette.values()),
     # )
 
-    df_icur = get_icur_df(d_results, disc_flag="discount")
-    # table_icur(df_icur, tab_name="Table_3_icur.xlsx")
-    figure_icur_time(
-        df_icur,
-        fig_name="Figure_10_icur_time.pdf",
-        linear_scale=True,
-        inset_axes=True,
-        colors=list(jama_palette.values()),
+    # df_icur = get_icur_df(d_results, disc_flag="discount")
+    # # table_icur(df_icur, tab_name="Table_3_icur.xlsx")
+    # figure_icur_time(
+    #     df_icur,
+    #     fig_name="Figure_10_icur_time.pdf",
+    #     linear_scale=True,
+    #     inset_axes=True,
+    #     colors=list(jama_palette.values()),
+    # )
+
+    table_parameters_by_age_group(
+        d_results, tab_name="Table_s1_parameters_by_age_group.xlsx"
     )
 
-    # table_parameters_by_age_group(
-    #     d_results, tab_name="Table_s1_parameters_by_age_group.xlsx"
-    # )
+    df_budget = get_budget_df(d_results, vacc_reimburse=1.0, unit=1000000)
+    figure_budget(
+        df_budget,
+        plot_kind="line",
+        fig_name="Figure_11_budget_bar.pdf",
+        y_label="Cost (millions yuan)",
+        colors=list(jama_palette.values()),
+        figsize=(6, 6),
+        bar_width=0.35
+    )
 
-    # df_budget = get_budget_df(d_results, vacc_reimburse=1.0, unit=1000000)
-    # figure_budget(
-    #     df_budget,
-    #     plot_kind="bar",
-    #     fig_name="Figure_11_budget_bar.pdf",
-    #     y_label="Cost (millions yuan)",
-    #     colors=list(jama_palette.values()),
-    #     figsize=(8, 8),
-    #     bar_width=0.35
-    # )
+    df_budget_3937 = get_budget_df(
+        d_results,
+        vacc_reimburse=0.3937,
+        person_rate=0.6063,
+        unit=1000000,
+    )
+    df_budget_7428 = get_budget_df(
+        d_results,
+        vacc_reimburse=0.7428,
+        person_rate=0.2572,
+        unit=1000000,
+    )
+    df_budget_three = get_budget_df(
+        d_results,
+        vacc_reimburse=0.2791,
+        gov_rate=0.2619,
+        person_rate=0.4590,
+        unit=1000000,
+    )
+    figure_budget_increment_compare(
+        {
+            "personal payment 60.63%": df_budget_3937,
+            "personal payment 25.72%": df_budget_7428,
+            (
+                "personal payment 45.90%, " "government payment 26.19%"
+            ): df_budget_three,
+        },
+        fig_name="Figure_12_budget_increment_compare.pdf",
+        colors=list(jama_palette.values()),
+        figsize=(6, 6),
+    )
+    figure_budget_three_party(
+        df_budget_three,
+        fig_name="Figure_13_budget_three_party.pdf",
+        figsize=(6, 6),
+        plot_kind="line",
+        colors=list(jama_palette.values())
+    )
 
-    # df_budget_3937 = get_budget_df(
-    #     d_results,
-    #     vacc_reimburse=0.3937,
-    #     person_rate=0.6063,
-    #     unit=1000000,
-    # )
-    # df_budget_7428 = get_budget_df(
-    #     d_results,
-    #     vacc_reimburse=0.7428,
-    #     person_rate=0.2572,
-    #     unit=1000000,
-    # )
-    # df_budget_three = get_budget_df(
-    #     d_results,
-    #     vacc_reimburse=0.2791,
-    #     gov_rate=0.2619,
-    #     person_rate=0.4590,
-    #     unit=1000000,
-    # )
-    # figure_budget_increment_compare(
-    #     {
-    #         "personal payment 60.63%": df_budget_3937,
-    #         "personal payment 25.72%": df_budget_7428,
-    #         (
-    #             "personal payment 45.90%, " "government payment 26.19%"
-    #         ): df_budget_three,
-    #     },
-    #     fig_name="Figure_12_budget_increment_compare.pdf",
-    #     colors=list(jama_palette.values()),
-    #     figsize=(8, 6),
-    # )
-    # figure_budget_three_party(
-    #     df_budget_three,
-    #     fig_name="Figure_13_budget_three_party.pdf",
-    #     figsize=(10, 6),
-    #     plot_kind="bar",
-    #     colors=list(jama_palette.values())
-    # )
-
-    # df_price_demand = get_price_demand_df("../data/price_demand_data.dta")
-    # incomes = np.quantile(
-    #     df_price_demand["income_wo_outlier"],
-    #     [0, 0.07, 0.15, 0.25, 0.5, 0.75, 1.0],
-    # )
-    # plot_price_demand_function(
-    #     df_price_demand,
-    #     income=incomes,
-    #     fig_name="Figure_14_price_demand_function.pdf",
-    #     linewidth=1.5,
-    #     colors=list(jama_palette.values())
-    # )
+    df_price_demand = get_price_demand_df("../data/price_demand_data.dta")
+    incomes = np.quantile(
+        df_price_demand["income_wo_outlier"],
+        [0, 0.07, 0.15, 0.25, 0.5, 0.75, 1.0],
+    )
+    plot_price_demand_function(
+        df_price_demand,
+        income=incomes,
+        fig_name="Figure_14_price_demand_function.pdf",
+        linewidth=1.5,
+        colors=list(jama_palette.values()),
+        figsize=(6, 6),
+    )
 
 
 if __name__ == "__main__":
