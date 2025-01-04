@@ -95,9 +95,7 @@ def plot_for_scenario(
         )
 
         # 强制要求y轴为科学计数法
-        ax.ticklabel_format(
-            style="sci", axis="y", useMathText=True, scilimits=(0, 0)
-        )
+        ax.ticklabel_format(style="sci", axis="y", useMathText=True, scilimits=(0, 0))
 
     return fig, axs
 
@@ -296,9 +294,7 @@ def save_evaluation_to_hdf5(
                 continue
             g_eval_result.create_dataset(k, data=v)
 
-    eval_obj.ltable.reset_index(drop=True).to_hdf(
-        hdf5_path, "evaluation/ltable"
-    )
+    eval_obj.ltable.reset_index(drop=True).to_hdf(hdf5_path, "evaluation/ltable")
 
 
 def convert_pkl_to_hdf5(results_dict: dict[str, dict[str, str]]):
@@ -398,17 +394,13 @@ def figure_burden_total(
         df.append(dfi)
         # 选择reference结果中最长时间的作为对照（即无疫苗接种的结果）
         if scenario == "100 Years":
-            ref_evaluator = Evaluator.from_hdf(
-                osp.join(trial_root, "ref_eval.h5")
-            )
+            ref_evaluator = Evaluator.from_hdf(osp.join(trial_root, "ref_eval.h5"))
             incidence_i = ref_evaluator.cal_incidence(reduce=True, reuse=True)
             dfi = pd.DataFrame(
                 {
                     "t": ref_evaluator.t_,
                     "burden": incidence_i,
-                    "scenario": np.array(
-                        ["No Vaccine"] * len(ref_evaluator.t_)
-                    ),
+                    "scenario": np.array(["No Vaccine"] * len(ref_evaluator.t_)),
                 }
             )
             df.append(dfi)
@@ -472,9 +464,7 @@ def figure_burden_age(
     ax.set_xticklabels(ax.get_xticklabels(), rotation=45)
     # ax.set_title("Incidence vs. Age Group")
     ax.legend(frameon=False, fancybox=False)
-    ax.ticklabel_format(
-        style="sci", axis="y", scilimits=(0, 0), useMathText=True
-    )
+    ax.ticklabel_format(style="sci", axis="y", scilimits=(0, 0), useMathText=True)
     fig.tight_layout()
 
     if fig_name is not None:
@@ -495,9 +485,7 @@ def figure_burden_age_time(
 ):
     assert burden_type in ["incidence", "mortality"], "Unsupported burden_type"
 
-    df_plot = incidence_age_df[
-        incidence_age_df[age_colname] > min_age_group
-    ].copy()
+    df_plot = incidence_age_df[incidence_age_df[age_colname] > min_age_group].copy()
     df_plot[age_colname] = df_plot.age.cat.remove_unused_categories()
 
     agebins = df_plot[age_colname].cat.categories
@@ -525,9 +513,7 @@ def figure_burden_age_time(
         ax.set_ylabel("")
         ax.set_xlabel("")
         ax.set_title(agebins[i])
-        ax.ticklabel_format(
-            style="sci", axis="y", scilimits=(0, 0), useMathText=True
-        )
+        ax.ticklabel_format(style="sci", axis="y", scilimits=(0, 0), useMathText=True)
 
     fig.supxlabel("Time (years)")
     fig.supylabel("Incidence" if burden_type == "incidence" else "Mortality")
@@ -634,9 +620,7 @@ def figure_cost_time(
             sns.lineplot(x=x, y=y, ax=ax, palette=colors, hue=hue)
         # ax.set_xlabel("Time (years)")
         ax.set_ylabel(formal_name)
-        ax.ticklabel_format(
-            style="sci", axis="y", scilimits=(0, 0), useMathText=True
-        )
+        ax.ticklabel_format(style="sci", axis="y", scilimits=(0, 0), useMathText=True)
 
     fig.supxlabel("Time (years)")
     handles, labels = ax.get_legend_handles_labels()
@@ -686,10 +670,7 @@ def table_strategies_choiced(
         )
         best_icer, choice_trial = np.inf, None
         for trial in study.best_trials:
-            if (
-                trial.values[0] < best_icer
-                and trial.values[1] <= incidence_threshold
-            ):
+            if trial.values[0] < best_icer and trial.values[1] <= incidence_threshold:
                 best_icer = trial.values[0]
                 choice_trial = trial
         os.chdir(ori_dir)
@@ -721,9 +702,7 @@ def table_strategies_choiced(
             "imp2": "Imported bivalent vaccines",
             "imp9": "Imported nine-valent vaccine",
         }[target_vacc]
-        icurs = tar_evaluator.cal_icur(
-            ref_evaluator, reuse=False, minor_reuse=False
-        )
+        icurs = tar_evaluator.cal_icur(ref_evaluator, reuse=False, minor_reuse=False)
 
         # 计算经济学评价指标
         resi = {
@@ -752,13 +731,9 @@ def get_icur_df(
 
         tar_cost_vacc = tar_evaluator.cal_cost_vacc(reuse=False)
         tar_cost_cecx = tar_evaluator.cal_cost_cecx(reuse=False)
-        diff_cost_cecx = (
-            ref_evaluator.cal_cost_cecx(reuse=False) - tar_cost_cecx
-        )
+        diff_cost_cecx = ref_evaluator.cal_cost_cecx(reuse=False) - tar_cost_cecx
         net_cost = tar_cost_vacc - diff_cost_cecx
-        icur = tar_evaluator.cal_icur(
-            ref_evaluator, reuse=False, minor_reuse=True
-        )
+        icur = tar_evaluator.cal_icur(ref_evaluator, reuse=False, minor_reuse=True)
         avoid_cecx = tar_evaluator.cal_avoid_cecx(
             ref_evaluator, reuse=False, minor_reuse=True
         ).sum(axis=1)
@@ -873,18 +848,12 @@ def figure_icur_time(
                 ax=ax,
                 palette=colors,
             )
-        ax.ticklabel_format(
-            style="sci", axis="y", scilimits=(0, 0), useMathText=True
-        )
+        ax.ticklabel_format(style="sci", axis="y", scilimits=(0, 0), useMathText=True)
         if not linear_scale and not col_name.startswith("avoid"):
             ax.set_yscale("symlog", linthresh=100)
         if linear_scale and inset_axes and not col_name.startswith("avoid"):
-            x1_ori = {"ic_per_cecx": 18, "ic_per_cecx_death": 30, "icur": 20}[
-                col_name
-            ]
-            x2_ori = {"ic_per_cecx": 50, "ic_per_cecx_death": 100, "icur": 50}[
-                col_name
-            ]
+            x1_ori = {"ic_per_cecx": 18, "ic_per_cecx_death": 30, "icur": 20}[col_name]
+            x2_ori = {"ic_per_cecx": 50, "ic_per_cecx_death": 100, "icur": 50}[col_name]
             df_icur_sub = df_icur.query(f"t >= {x1_ori} and t <= {x2_ori}")
             y1_ori = df_icur_sub[col_name].min()
             y2_ori = df_icur_sub[col_name].max()
@@ -947,12 +916,8 @@ def table_parameters_by_age_group(
     df = pd.DataFrame(
         {
             "Age group": model.agebin_names,
-            "Number of sexual partners per year for women": model.kwargs[
-                "omega_f"
-            ],
-            "Number of sexual partners per year for men": model.kwargs[
-                "omega_m"
-            ],
+            "Number of sexual partners per year for women": model.kwargs["omega_f"],
+            "Number of sexual partners per year for men": model.kwargs["omega_m"],
             "Mortality rate of local cancer": model.kwargs["dL"],
             "Mortality rate of region cancer": model.kwargs["dR"],
             "Mortality rate of distant cancer": model.kwargs["dD"],
@@ -994,9 +959,7 @@ def insurance_cost(
     # 实际接受治疗的人数
     ncecx_treat = ncecx * cecx_diag * cecx_treatment
     # 贴现率
-    disc_rate_arr = np.power(
-        1 / (1 + discount_rate), np.arange(ncecx.shape[0])
-    )
+    disc_rate_arr = np.power(1 / (1 + discount_rate), np.arange(ncecx.shape[0]))
     # 花费（放在前面，因为不同年龄组的疫苗花费不同，这里希望直接使用cost_pvacc_vec）
     cost_cecx = ncecx_treat * evaluator.cost_pcecx * disc_rate_arr[:, None]
     cost_vacc = nvacc * evaluator.cost_pvacc * disc_rate_arr[:, None]
@@ -1022,9 +985,7 @@ def insurance_cost(
 
     # 计算总的医保花费
     cost_insurance = (
-        cost_vacc_insurance
-        + cost_cecx_minor_insurance
-        + cost_cecx_adult_insurance
+        cost_vacc_insurance + cost_cecx_minor_insurance + cost_cecx_adult_insurance
     )
 
     df_res = pd.DataFrame(
@@ -1035,9 +996,7 @@ def insurance_cost(
             "cost_vacc": cost_vacc * exchange_rate,
             "cost_treated": cost_cecx.sum(axis=1) * exchange_rate,
             "cost_vacc_insurance": cost_vacc_insurance * exchange_rate,
-            "cost_cecx_insured": (
-                cost_cecx_minor_insurance + cost_cecx_adult_insurance
-            )
+            "cost_cecx_insured": (cost_cecx_minor_insurance + cost_cecx_adult_insurance)
             * exchange_rate,
             "cost_insurance": cost_insurance * exchange_rate,
         }
@@ -1061,9 +1020,7 @@ def get_budget_df(
     assert (
         vacc_reimburse + gov_rate + busi_rate + person_rate == 1.0
     ), "all rates should add up to 1.0"
-    assert (
-        eval_scenario in results_dict.keys()
-    ), "eval_scenario not in results_dict"
+    assert eval_scenario in results_dict.keys(), "eval_scenario not in results_dict"
 
     eval_tar_root = results_dict[eval_scenario]["discount"]
     eval_ref_root = results_dict[ref_scenario]["discount"]
@@ -1109,9 +1066,7 @@ def get_budget_df(
         [df_insurance_tar, df_insurance_ref, df_insurance_diff, other_money],
         axis=1,
     )
-    df_insurance_select.columns = pd.MultiIndex.from_arrays(
-        [columns1, columns2]
-    )
+    df_insurance_select.columns = pd.MultiIndex.from_arrays([columns1, columns2])
 
     df_sum = df_insurance_select.sum(axis=0)
     df_insurance_select = pd.concat(
@@ -1194,6 +1149,8 @@ def figure_budget_increment_compare(
     figsize: tuple[float, float] = (8, 6),
     begin_year: int = 2019,
     y_label: str = "Cost (millions yuan)",
+    bg_grid: bool = False,
+    top_right_splines: bool = True,
 ):
     fig, ax = plt.subplots(figsize=figsize)
     for i, (k, dfi) in enumerate(budget_df_dict.items()):
@@ -1222,11 +1179,13 @@ def figure_budget_increment_compare(
         )
 
     # 设置网格
-    ax.grid(True, which="both", axis="y")
+    if bg_grid:
+        ax.grid(True, which="both", axis="y")
     # 设置坐标轴，去掉上和右侧，将底部设置为y=0的位置
-    ax.spines[["top", "right"]].set_visible(False)
-    ax.spines["left"].set_position(("data", begin_year - 1))
-    ax.spines["bottom"].set_position("zero")
+    if not top_right_splines:
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.spines["left"].set_position(("data", begin_year - 1))
+        ax.spines["bottom"].set_position("zero")
 
     ax.xaxis.tick_bottom()
     ax.yaxis.tick_left()
@@ -1248,9 +1207,7 @@ def figure_budget_increment_compare(
         ["insurance cost increment", "vaccination cost", "insurance cost"],
         [".", ",", "x"],
     ):
-        legend_elements.append(
-            Line2D([0], [0], marker=m, color="black", label=k)
-        )
+        legend_elements.append(Line2D([0], [0], marker=m, color="black", label=k))
 
     ax.legend(
         handles=legend_elements,
@@ -1302,11 +1259,7 @@ def figure_budget_three_party(
                 ],
             )
         ):
-            y = (
-                df_budget[col].values
-                if j == 0
-                else df_budget[col].values.cumsum()
-            )
+            y = df_budget[col].values if j == 0 else df_budget[col].values.cumsum()
             if plot_kind == "line":
                 ax.plot(
                     x,
@@ -1381,6 +1334,8 @@ def plot_price_demand_function(
     colors: tuple[str, ...] = tuple(reversed(nejm_palette.values())),
     figsize: tuple[float, float] = (6, 4),
     linewidth: float = 2,
+    bg_grid: bool = False,
+    top_right_splines: bool = True,
 ):
     if isinstance(income, (int, float)):
         income = np.array([income])
@@ -1414,8 +1369,10 @@ def plot_price_demand_function(
             linewidth=linewidth,
         )
 
-    ax.grid(True, which="both", axis="both")
-    ax.spines[["top", "right"]].set_visible(False)
+    if bg_grid:
+        ax.grid(True, which="both", axis="both")
+    if not top_right_splines:
+        ax.spines[["top", "right"]].set_visible(False)
     ax.legend(
         loc="best",
         frameon=False,
@@ -1550,7 +1507,7 @@ def main():
         y_label="Cost (millions yuan)",
         colors=list(jama_palette.values()),
         figsize=(6, 6),
-        bar_width=0.35
+        bar_width=0.35,
     )
 
     df_budget_3937 = get_budget_df(
@@ -1576,21 +1533,19 @@ def main():
         {
             "personal payment 60.63%": df_budget_3937,
             "personal payment 25.72%": df_budget_7428,
-            (
-                "personal payment 45.90%, " "government payment 26.19%"
-            ): df_budget_three,
+            ("personal payment 45.90%, " "government payment 26.19%"): df_budget_three,
         },
         fig_name="Figure_12_budget_increment_compare.pdf",
         colors=list(jama_palette.values()),
         figsize=(6, 6),
     )
-    figure_budget_three_party(
-        df_budget_three,
-        fig_name="Figure_13_budget_three_party.pdf",
-        figsize=(6, 6),
-        plot_kind="line",
-        colors=list(jama_palette.values())
-    )
+    # figure_budget_three_party(
+    #     df_budget_three,
+    #     fig_name="Figure_13_budget_three_party.pdf",
+    #     figsize=(6, 6),
+    #     plot_kind="line",
+    #     colors=list(jama_palette.values())
+    # )
 
     df_price_demand = get_price_demand_df("../data/price_demand_data.dta")
     incomes = np.quantile(
