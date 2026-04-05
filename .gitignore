@@ -11,8 +11,9 @@ results/
 data/
 build/
 paper/src_/
+.venv/
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
 
 !.gitignore
-!paper/*.pdf
-!paper/*.png
-!paper/*.ipynb

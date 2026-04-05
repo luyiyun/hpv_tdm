@@ -1,39 +1,53 @@
 [build-system]
-requires = ["setuptools", "cython", "setuptools-scm"]  # 如果使用setup.py并且其中需要运行的包，都需要放在这里
+requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "hpv_tdm"
-authors = [
-  {name = "Rong Zhiwei", email = "rongzhiwei@bjmu.edu.cn"}
-]
-description = ""
-keywords = ["hpv", "vaccine", "transmission dynamic models", "bayesian optimization"]
-license = {file = "LICENSE"}
+version = "0.1.0"
+description = "HPV transmission dynamics simulation and vaccination strategy search toolkit."
+readme = "README.md"
 requires-python = ">=3.10"
-readme = "readme.md"
+authors = [{ name = "Rong Zhiwei", email = "rongzhiwei@bjmu.edu.cn" }]
+keywords = ["hpv", "vaccination", "transmission dynamics", "bayesian optimization"]
 dependencies = [
-  "numpy==1.26.0",
-  "scipy==1.10.0",
-  "pandas==1.5.0",
-  "matplotlib",
-  "seaborn",
-  "optuna==3.1.0",
-  "ipython",
-  "ipdb",
-  "hydra-core",
-  "h5py",
-  "tables",
-  "openpyxl"
+  "h5py>=3.11.0",
+  "matplotlib>=3.8.0",
+  "numpy>=1.26.0",
+  "openpyxl>=3.1.0",
+  "optuna>=3.6.0",
+  "pandas>=2.2.0",
+  "pydantic>=2.8.0",
+  "scipy>=1.12.0",
+  "seaborn>=0.13.0",
+  "tables>=3.9.0",
+  "tqdm>=4.66.0",
 ]
-dynamic = ["version"]
+
 [project.optional-dependencies]
-develop = [
-    "lifelines",
+experiments = ["lifelines>=0.30.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3.0",
+  "ruff>=0.8.0",
 ]
 
-[tool.setuptools.packages]
-find = {where = ["src"], namespaces = true}  # namespaces=false will prevent any folder without an __init__.py file
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
 
-[tool.setuptools_scm]
-# can be empty if no extra settings are needed, presence enables setuptools_scm
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
