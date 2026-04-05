@@ -133,6 +133,8 @@ class Searcher:
         self,
         model: BaseHPVTransmissionModel,
         evaluator: Evaluator,
+        *,
+        output_dir: str | Path | None = None,
     ) -> SearchResult:
         base_config = model.to_config()
         if self.config.age_index_span[1] > base_config.nages:
@@ -146,17 +148,25 @@ class Searcher:
         reference_simulation = model.simulate()
         reference_evaluation = evaluator.evaluate(reference_simulation)
 
-        output_dir = Path(self.config.output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        storage_path = output_dir / self.config.storage_filename
         sampler = optuna.samplers.TPESampler(seed=self.config.seed)
-        study = optuna.create_study(
-            study_name=self.config.study_name,
-            storage=f"sqlite:///{storage_path}",
-            sampler=sampler,
-            directions=["minimize", "minimize"],
-            load_if_exists=True,
-        )
+        storage_path: Path | None = None
+        if output_dir is None:
+            study = optuna.create_study(
+                study_name=self.config.study_name,
+                sampler=sampler,
+                directions=["minimize", "minimize"],
+            )
+        else:
+            output_path = Path(output_dir)
+            output_path.mkdir(parents=True, exist_ok=True)
+            storage_path = output_path / self.config.storage_filename
+            study = optuna.create_study(
+                study_name=self.config.study_name,
+                storage=f"sqlite:///{storage_path}",
+                sampler=sampler,
+                directions=["minimize", "minimize"],
+                load_if_exists=True,
+            )
 
         def objective(trial: optuna.Trial) -> tuple[float, float]:
             candidate_config = self._suggest_candidate(trial, model)
@@ -185,10 +195,12 @@ class Searcher:
 
         best_simulation: SimulationResult | None = None
         best_evaluation = None
+        best_model_config = None
         if best_trial is not None:
-            model.set_config(
-                self._build_candidate_from_params(base_config, best_trial.params)
+            best_model_config = self._build_candidate_from_params(
+                base_config, best_trial.params
             )
+            model.set_config(best_model_config)
             best_simulation = model.simulate()
             best_evaluation = evaluator.evaluate(best_simulation, reference_simulation)
 
@@ -196,7 +208,9 @@ class Searcher:
         return SearchResult(
             config=self.config,
             study=study,
+            study_storage_path=storage_path,
             reference_evaluation=reference_evaluation,
+            best_model_config=best_model_config,
             best_simulation=best_simulation,
             best_evaluation=best_evaluation,
             best_trial=best_trial,

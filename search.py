@@ -46,18 +46,35 @@ def main() -> None:
     parser.add_argument(
         "--search-config", required=True, help="Path to search config JSON."
     )
+    parser.add_argument(
+        "--time-horizon",
+        type=float,
+        help="Optional final simulation year used during search.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default="results/search_run",
+        help="Directory used to save search outputs.",
+    )
     args = parser.parse_args()
 
     model_config = _load_model_config(args.model_config)
+    if args.time_horizon is not None:
+        simulation = model_config.simulation.model_copy(
+            update={
+                "t_span": (model_config.simulation.t_span[0], float(args.time_horizon))
+            }
+        )
+        model_config = model_config.model_copy(update={"simulation": simulation})
     evaluation_config = EvaluationConfig.from_json_file(args.evaluation_config)
     search_config = SearchConfig.from_json_file(args.search_config)
 
     model = _build_model(model_config)
     evaluator = Evaluator(evaluation_config)
     searcher = Searcher(search_config)
-    search_result = searcher.search(model, evaluator)
+    search_result = searcher.search(model, evaluator, output_dir=args.output_dir)
 
-    output_dir = Path(search_config.output_dir)
+    output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     model_config.to_json_file(output_dir / "model_config.json")
     evaluation_config.to_json_file(output_dir / "evaluation_config.json")

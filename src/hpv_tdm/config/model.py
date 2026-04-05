@@ -495,10 +495,6 @@ class SimulationOptionsConfig(ConfigBase):
         default=None,
         description="可选的初始状态文件路径；为空时使用模型默认初值。",
     )
-    output_dir: str = Field(
-        default="results/simulate_run",
-        description="结果输出目录。",
-    )
     save_last_state: bool = Field(
         default=True,
         description="是否保存最后时刻状态到 `last.npy`。",

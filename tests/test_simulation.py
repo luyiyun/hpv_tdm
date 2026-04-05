@@ -19,7 +19,6 @@ def _small_aggregate_config(tmp_path) -> AggregateModelConfig:
         simulation={
             "t_span": (0.0, 20.0),
             "n_eval": 11,
-            "output_dir": str(tmp_path / "aggregate"),
             "save_last_state": False,
             "generate_plots": False,
         },
@@ -33,7 +32,6 @@ def _small_subtype_config(tmp_path) -> SubtypeGroupedModelConfig:
         simulation={
             "t_span": (0.0, 20.0),
             "n_eval": 11,
-            "output_dir": str(tmp_path / "subtype"),
             "save_last_state": False,
             "generate_plots": False,
         },

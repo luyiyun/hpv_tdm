@@ -42,13 +42,18 @@ def main() -> None:
         "--evaluation-config",
         help="Optional path to evaluation config JSON.",
     )
+    parser.add_argument(
+        "--output-dir",
+        default="results/simulate_run",
+        help="Directory used to save simulation outputs.",
+    )
     args = parser.parse_args()
 
     model_config = _load_model_config(args.model_config)
     model = _build_model(model_config)
     simulation_result = model.simulate()
 
-    output_dir = Path(model_config.simulation.output_dir)
+    output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     model_config.to_json_file(output_dir / "model_config.json")
     simulation_result.to_hdf(output_dir / "simulation_result.h5")

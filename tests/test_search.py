@@ -20,7 +20,6 @@ def test_search_smoke_and_save_roundtrip(tmp_path, strategy: str) -> None:
         simulation={
             "t_span": (0.0, 10.0),
             "n_eval": 6,
-            "output_dir": str(tmp_path / "simulate"),
             "save_last_state": False,
             "generate_plots": False,
         },
@@ -31,18 +30,20 @@ def test_search_smoke_and_save_roundtrip(tmp_path, strategy: str) -> None:
         incidence_threshold=1.0,
         strategy=strategy,
         product_ids=["bivalent"],
-        output_dir=str(tmp_path / strategy),
     )
 
     model = AgeSexAggregateHPVModel(model_config)
     evaluator = Evaluator(EvaluationConfig(discount_rate=0.0))
-    result = Searcher(search_config).search(model, evaluator)
+    result = Searcher(search_config).search(
+        model, evaluator, output_dir=tmp_path / strategy
+    )
 
     assert isinstance(result, SearchResult)
     assert result.study.directions is not None
-    result.save()
+    result.save(tmp_path / strategy)
     reloaded = SearchResult.from_dir(tmp_path / strategy)
 
     assert (tmp_path / strategy / "study.db").exists()
     assert (tmp_path / strategy / "search_result.h5").exists()
+    assert (tmp_path / strategy / "best_model_config.json").exists()
     assert reloaded.study.study_name == search_config.study_name

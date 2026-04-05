@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -20,14 +21,18 @@ class SearchResult:
         *,
         config,
         study: optuna.Study,
+        study_storage_path: Path | None,
         reference_evaluation: EvaluationResult,
+        best_model_config,
         best_simulation: SimulationResult | None,
         best_evaluation: EvaluationResult | None,
         best_trial: optuna.trial.FrozenTrial | None,
     ) -> None:
         self.config = config
         self.study = study
+        self.study_storage_path = study_storage_path
         self.reference_evaluation = reference_evaluation
+        self.best_model_config = best_model_config
         self.best_simulation = best_simulation
         self.best_evaluation = best_evaluation
         self.best_trial = best_trial
@@ -105,8 +110,8 @@ class SearchResult:
             fig.savefig(save_path, dpi=200)
         return fig
 
-    def save(self, directory: str | Path | None = None) -> None:
-        target_dir = Path(directory or self.config.output_dir)
+    def save(self, directory: str | Path) -> None:
+        target_dir = Path(directory)
         target_dir.mkdir(parents=True, exist_ok=True)
 
         self.config.to_json_file(target_dir / "search_config.json")
@@ -146,6 +151,13 @@ class SearchResult:
                 handle.create_group("reference_evaluation")
             )
 
+        if self.study_storage_path is not None and self.study_storage_path.exists():
+            storage_target = target_dir / self.config.storage_filename
+            if self.study_storage_path.resolve() != storage_target.resolve():
+                shutil.copy2(self.study_storage_path, storage_target)
+
+        if self.best_model_config is not None:
+            self.best_model_config.to_json_file(target_dir / "best_model_config.json")
         if self.best_simulation is not None:
             self.best_simulation.to_hdf(target_dir / "best_simulation.h5")
         if self.best_evaluation is not None:
@@ -153,7 +165,11 @@ class SearchResult:
 
     @classmethod
     def from_dir(cls, directory: str | Path) -> "SearchResult":
-        from ..config import SearchConfig
+        from ..config import (
+            AggregateModelConfig,
+            SearchConfig,
+            SubtypeGroupedModelConfig,
+        )
 
         root = Path(directory)
         config = SearchConfig.from_json_file(root / "search_config.json")
@@ -175,6 +191,19 @@ class SearchResult:
             )
         best_simulation = None
         best_evaluation = None
+        best_model_config = None
+        if (root / "best_model_config.json").exists():
+            with (root / "best_model_config.json").open(
+                "r", encoding="utf-8"
+            ) as handle:
+                payload = json.load(handle)
+            model_kind = payload.get("model_kind", "aggregate")
+            if model_kind == "aggregate":
+                best_model_config = AggregateModelConfig.from_json_dict(payload)
+            elif model_kind == "subtype_grouped":
+                best_model_config = SubtypeGroupedModelConfig.from_json_dict(payload)
+            else:
+                raise ValueError(f"unsupported model kind: {model_kind}")
         if (root / "best_simulation.h5").exists():
             best_simulation = SimulationResult.from_hdf(root / "best_simulation.h5")
         if (root / "best_evaluation.h5").exists():
@@ -182,7 +211,9 @@ class SearchResult:
         return cls(
             config=config,
             study=study,
+            study_storage_path=root / config.storage_filename,
             reference_evaluation=reference_evaluation,
+            best_model_config=best_model_config,
             best_simulation=best_simulation,
             best_evaluation=best_evaluation,
             best_trial=best_trial,

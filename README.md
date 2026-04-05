@@ -47,8 +47,8 @@ uv sync --all-extras --dev
 常用命令：
 
 ```bash
-uv run simulate.py --model-config conf/simulate.json --evaluation-config conf/evaluation.json
-uv run search.py --model-config conf/simulate.json --evaluation-config conf/evaluation.json --search-config conf/search.json
+uv run simulate.py --model-config conf/simulate.json --evaluation-config conf/evaluation.json --output-dir results/example_simulation
+uv run search.py --model-config conf/simulate.json --evaluation-config conf/evaluation.json --search-config conf/search.json --time-horizon 60 --output-dir results/example_search
 uv run pytest
 uv run ruff check .
 uv run ruff format .
@@ -97,7 +97,6 @@ config = AggregateModelConfig(
     simulation={
         "t_span": (0.0, 80.0),
         "n_eval": 81,
-        "output_dir": "results/demo_simulation",
     },
 )
 
@@ -184,12 +183,11 @@ searcher = Searcher(
     SearchConfig(
         n_trials=100,
         strategy="one",
-        output_dir="results/demo_search",
     )
 )
 
-search_result = searcher.search(model, evaluator)
-search_result.save()
+search_result = searcher.search(model, evaluator, output_dir="results/demo_search")
+search_result.save("results/demo_search")
 print(search_result.summary_table())
 ```
 
@@ -209,7 +207,7 @@ print(search_result.summary_table())
 - `summary_table()`
 - `plot_history()`
 - `plot_pareto()`
-- `save()`
+- `save(directory)`
 - `from_dir()`
 
 默认保存内容包括：
@@ -270,7 +268,8 @@ JSON 合并规则固定为：
 ```bash
 uv run simulate.py \
   --model-config conf/simulate.json \
-  --evaluation-config conf/evaluation.json
+  --evaluation-config conf/evaluation.json \
+  --output-dir results/example_simulation
 ```
 
 ### 策略搜索
@@ -279,7 +278,9 @@ uv run simulate.py \
 uv run search.py \
   --model-config conf/simulate.json \
   --evaluation-config conf/evaluation.json \
-  --search-config conf/search.json
+  --search-config conf/search.json \
+  --time-horizon 60 \
+  --output-dir results/example_search
 ```
 
 这两个脚本本质上只是包外示例工程，它们和普通使用者一样，只调用公开 API。
@@ -300,6 +301,7 @@ uv run search.py \
 - `search_result.h5`
 - `best_simulation.h5`
 - `best_evaluation.h5`
+- `best_model_config.json`
 - `model_config.json`
 - `evaluation_config.json`
 - `search_config.json`

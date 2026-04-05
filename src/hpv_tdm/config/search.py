@@ -61,10 +61,6 @@ class SearchConfig(ConfigBase):
         default=None,
         description="允许参与搜索的疫苗产品编号列表；为空时使用模型疫苗目录全部产品。",
     )
-    output_dir: str = Field(
-        default="results/search_run",
-        description="搜索结果输出目录。",
-    )
 
     @field_validator("strategy", mode="before")
     @classmethod
