@@ -7,8 +7,10 @@ import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.figure import Figure
 
 from ._io import ensure_parent, read_json_attr, write_json_attr
+from ._plot import apply_nature_style, apply_scientific_format
 
 
 class EvaluationResult:
@@ -116,7 +118,7 @@ class EvaluationResult:
         by_group: bool = False,
         log: bool = False,
         save_path: str | Path | None = None,
-    ) -> plt.Figure:
+    ) -> Figure:
         fig, ax = plt.subplots(figsize=(8, 4))
         if by_group:
             for name, values in self.incidence_by_group.items():
@@ -129,9 +131,12 @@ class EvaluationResult:
         ax.set_title("HPV Incidence")
         if log:
             ax.set_yscale("log")
+        else:
+            apply_scientific_format(ax)
+        apply_nature_style(fig, ax)
         fig.tight_layout()
         if save_path is not None:
-            fig.savefig(save_path, dpi=200)
+            fig.savefig(save_path, dpi=300, bbox_inches="tight")
         return fig
 
     def plot_mortality(
@@ -140,7 +145,7 @@ class EvaluationResult:
         by_group: bool = False,
         log: bool = False,
         save_path: str | Path | None = None,
-    ) -> plt.Figure:
+    ) -> Figure:
         fig, ax = plt.subplots(figsize=(8, 4))
         if by_group:
             for name, values in self.mortality_by_group.items():
@@ -153,12 +158,15 @@ class EvaluationResult:
         ax.set_title("Cervical Cancer Mortality")
         if log:
             ax.set_yscale("log")
+        else:
+            apply_scientific_format(ax)
+        apply_nature_style(fig, ax)
         fig.tight_layout()
         if save_path is not None:
-            fig.savefig(save_path, dpi=200)
+            fig.savefig(save_path, dpi=300, bbox_inches="tight")
         return fig
 
-    def plot_cost(self, *, save_path: str | Path | None = None) -> plt.Figure:
+    def plot_cost(self, *, save_path: str | Path | None = None) -> Figure:
         fig, ax = plt.subplots(figsize=(8, 4))
         ax.plot(self.time, self.cost_vacc, label="vaccination")
         ax.plot(self.time, self.cost_cecx, label="cervical_cancer")
@@ -167,12 +175,14 @@ class EvaluationResult:
         ax.set_ylabel("Cost")
         ax.set_title("Economic Cost")
         ax.legend()
+        apply_scientific_format(ax)
+        apply_nature_style(fig, ax)
         fig.tight_layout()
         if save_path is not None:
-            fig.savefig(save_path, dpi=200)
+            fig.savefig(save_path, dpi=300, bbox_inches="tight")
         return fig
 
-    def plot_daly(self, *, save_path: str | Path | None = None) -> plt.Figure:
+    def plot_daly(self, *, save_path: str | Path | None = None) -> Figure:
         fig, ax = plt.subplots(figsize=(8, 4))
         ax.plot(self.time, self.daly_fatal, label="fatal")
         ax.plot(self.time, self.daly_nofatal, label="nonfatal")
@@ -182,9 +192,11 @@ class EvaluationResult:
         ax.set_ylabel("DALY")
         ax.set_title("DALY")
         ax.legend()
+        apply_scientific_format(ax)
+        apply_nature_style(fig, ax)
         fig.tight_layout()
         if save_path is not None:
-            fig.savefig(save_path, dpi=200)
+            fig.savefig(save_path, dpi=300, bbox_inches="tight")
         return fig
 
     def plot_icur(
@@ -192,7 +204,7 @@ class EvaluationResult:
         *,
         save_path: str | Path | None = None,
         t_span: tuple[float, float] | None = None,
-    ) -> plt.Figure:
+    ) -> Figure:
         if self.icur is None:
             raise ValueError(
                 "ICUR is only available when a reference simulation is provided"
@@ -206,9 +218,11 @@ class EvaluationResult:
         ax.set_xlabel("Time")
         ax.set_ylabel("ICUR")
         ax.set_title("ICUR")
+        apply_scientific_format(ax)
+        apply_nature_style(fig, ax)
         fig.tight_layout()
         if save_path is not None:
-            fig.savefig(save_path, dpi=200)
+            fig.savefig(save_path, dpi=300, bbox_inches="tight")
         return fig
 
     def _write_metric_dict(

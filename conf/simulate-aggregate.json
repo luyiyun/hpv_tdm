@@ -1,5 +1,5 @@
 {
-  "model_kind": "subtype_grouped",
+  "model_kind": "aggregate",
   "population": {
     "total_female": 713510000.0,
     "total_male": 681870000.0
@@ -353,28 +353,5 @@
     "init_state_path": null,
     "save_last_state": true,
     "generate_plots": true
-  },
-  "subtype_groups": {
-    "hr_16_18": {
-      "label": "HPV 16/18",
-      "initial_weight": 0.147,
-      "infection_weight": 0.147,
-      "persistence_multiplier": 2.62,
-      "cancer_progression_multiplier": 1.77
-    },
-    "hr_31_33_45_52_58": {
-      "label": "HPV 31/33/45/52/58",
-      "initial_weight": 0.468,
-      "infection_weight": 0.468,
-      "persistence_multiplier": 0.93,
-      "cancer_progression_multiplier": 0.49
-    },
-    "hr_other": {
-      "label": "Other high-risk HPV",
-      "initial_weight": 0.385,
-      "infection_weight": 0.385,
-      "persistence_multiplier": 0.47,
-      "cancer_progression_multiplier": 0.59
-    }
   }
 }

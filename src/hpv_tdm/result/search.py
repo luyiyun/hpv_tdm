@@ -9,8 +9,11 @@ import h5py
 import matplotlib.pyplot as plt
 import optuna
 import pandas as pd
+from matplotlib.figure import Figure
+from matplotlib.lines import Line2D
 
 from ._io import ensure_parent, read_json_attr, write_json_attr
+from ._plot import PRODUCT_COLORS, apply_nature_style, apply_scientific_format
 from .evaluation import EvaluationResult
 from .simulation import SimulationResult
 
@@ -52,7 +55,7 @@ class SearchResult:
                 payload[f"param_{key}"] = value
         return pd.DataFrame([payload])
 
-    def plot_history(self, *, save_path: str | Path | None = None) -> plt.Figure:
+    def plot_history(self, *, save_path: str | Path | None = None) -> Figure:
         fig, axes = plt.subplots(1, 2, figsize=(10, 4))
         completed_trials = [
             trial
@@ -64,6 +67,9 @@ class SearchResult:
             [trial.values[0] for trial in completed_trials],
             marker="o",
             linestyle="-",
+            color="#2C7FB8",
+            linewidth=1.8,
+            markersize=4,
         )
         axes[0].set_title("ICUR History")
         axes[0].set_xlabel("Trial")
@@ -73,41 +79,112 @@ class SearchResult:
             [trial.values[1] for trial in completed_trials],
             marker="o",
             linestyle="-",
+            color="#D1495B",
+            linewidth=1.8,
+            markersize=4,
         )
         axes[1].set_title("Incidence History")
         axes[1].set_xlabel("Trial")
         axes[1].set_ylabel("Incidence")
+        for axis in axes:
+            apply_scientific_format(axis)
+        apply_nature_style(fig, axes)
         fig.tight_layout()
         if save_path is not None:
-            fig.savefig(save_path, dpi=200)
+            fig.savefig(save_path, dpi=300, bbox_inches="tight")
         return fig
 
-    def plot_pareto(self, *, save_path: str | Path | None = None) -> plt.Figure:
+    def plot_pareto(self, *, save_path: str | Path | None = None) -> Figure:
         fig, ax = plt.subplots(figsize=(6, 5))
         completed_trials = [
             trial
             for trial in self.study.trials
             if trial.state == optuna.trial.TrialState.COMPLETE
         ]
-        ax.scatter(
-            [trial.values[1] for trial in completed_trials],
-            [trial.values[0] for trial in completed_trials],
-            alpha=0.5,
-            label="all_trials",
+        product_ids = sorted(
+            {
+                str(trial.params.get("target_product_id", "unknown"))
+                for trial in completed_trials
+            }
         )
-        ax.scatter(
-            [trial.values[1] for trial in self.study.best_trials],
-            [trial.values[0] for trial in self.study.best_trials],
-            color="red",
-            label="pareto_front",
-        )
+        pareto_numbers = {trial.number for trial in self.study.best_trials}
+        for product_id in product_ids:
+            product_trials = [
+                trial
+                for trial in completed_trials
+                if trial.params.get("target_product_id") == product_id
+            ]
+            if not product_trials:
+                continue
+            ax.scatter(
+                [trial.values[1] for trial in product_trials],
+                [trial.values[0] for trial in product_trials],
+                color=PRODUCT_COLORS.get(product_id, "#6C757D"),
+                alpha=0.7,
+                s=36,
+                linewidths=0,
+            )
+            front_trials = [
+                trial for trial in product_trials if trial.number in pareto_numbers
+            ]
+            if front_trials:
+                ax.scatter(
+                    [trial.values[1] for trial in front_trials],
+                    [trial.values[0] for trial in front_trials],
+                    color=PRODUCT_COLORS.get(product_id, "#6C757D"),
+                    marker="*",
+                    s=140,
+                    edgecolors="#202020",
+                    linewidths=0.6,
+                )
         ax.set_xlabel("Incidence")
         ax.set_ylabel("ICUR")
         ax.set_title("Pareto Front")
-        ax.legend()
+        vaccine_handles = [
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                linestyle="",
+                markerfacecolor=PRODUCT_COLORS.get(product_id, "#6C757D"),
+                markeredgecolor="none",
+                markersize=8,
+                label=product_id,
+            )
+            for product_id in product_ids
+        ]
+        marker_handles = [
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                linestyle="",
+                markerfacecolor="#444444",
+                markeredgecolor="none",
+                markersize=7,
+                label="all trials",
+            ),
+            Line2D(
+                [0],
+                [0],
+                marker="*",
+                linestyle="",
+                markerfacecolor="#444444",
+                markeredgecolor="#202020",
+                markersize=11,
+                label="pareto front",
+            ),
+        ]
+        ax.legend(
+            handles=vaccine_handles + marker_handles,
+            frameon=False,
+            loc="best",
+        )
+        apply_scientific_format(ax, x=True, y=True)
+        apply_nature_style(fig, ax)
         fig.tight_layout()
         if save_path is not None:
-            fig.savefig(save_path, dpi=200)
+            fig.savefig(save_path, dpi=300, bbox_inches="tight")
         return fig
 
     def save(self, directory: str | Path) -> None:

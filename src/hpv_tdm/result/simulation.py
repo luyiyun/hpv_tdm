@@ -7,8 +7,10 @@ import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.figure import Figure
 
 from ._io import ensure_parent, read_json_attr, write_json_attr
+from ._plot import apply_nature_style, apply_scientific_format
 
 if TYPE_CHECKING:
     from ..model.base import BaseHPVTransmissionModel
@@ -100,7 +102,7 @@ class SimulationResult:
         by_group: bool = False,
         log: bool = False,
         save_path: str | Path | None = None,
-    ) -> plt.Figure:
+    ) -> Figure:
         model = self.get_model()
         female_population = model.total_female_population(self.state)
         fig, ax = plt.subplots(figsize=(8, 4))
@@ -127,9 +129,12 @@ class SimulationResult:
         ax.set_title("HPV Incidence")
         if log:
             ax.set_yscale("log")
+        else:
+            apply_scientific_format(ax)
+        apply_nature_style(fig, ax)
         fig.tight_layout()
         if save_path is not None:
-            fig.savefig(save_path, dpi=200)
+            fig.savefig(save_path, dpi=300, bbox_inches="tight")
         return fig
 
     def plot_mortality(
@@ -138,7 +143,7 @@ class SimulationResult:
         by_group: bool = False,
         log: bool = False,
         save_path: str | Path | None = None,
-    ) -> plt.Figure:
+    ) -> Figure:
         model = self.get_model()
         female_population = model.total_female_population(self.state)
         fig, ax = plt.subplots(figsize=(8, 4))
@@ -165,9 +170,12 @@ class SimulationResult:
         ax.set_title("Cervical Cancer Mortality")
         if log:
             ax.set_yscale("log")
+        else:
+            apply_scientific_format(ax)
+        apply_nature_style(fig, ax)
         fig.tight_layout()
         if save_path is not None:
-            fig.savefig(save_path, dpi=200)
+            fig.savefig(save_path, dpi=300, bbox_inches="tight")
         return fig
 
     def _write_to_group(self, group: h5py.Group) -> None:
