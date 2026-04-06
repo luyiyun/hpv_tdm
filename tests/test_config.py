@@ -51,13 +51,12 @@ def test_model_config_json_merge_keeps_defaults(tmp_path) -> None:
         "hr_other",
     }
     assert config.subtype_groups["hr_16_18"].initial_weight == pytest.approx(0.147)
-    assert config.subtype_groups["hr_16_18"].infection_weight == pytest.approx(0.147)
     assert config.subtype_groups["hr_16_18"].persistence_multiplier == pytest.approx(
-        2.62
+        2.616
     )
     assert config.subtype_groups[
         "hr_31_33_45_52_58"
-    ].cancer_progression_multiplier == pytest.approx(0.49)
+    ].cancer_progression_multiplier == pytest.approx(0.492)
 
 
 def test_subtype_vaccine_group_protection_defaults_to_structural_zero_one() -> None:

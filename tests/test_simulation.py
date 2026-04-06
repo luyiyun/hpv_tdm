@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import importlib.util
+from pathlib import Path
+
 import numpy as np
 
 from hpv_tdm import (
@@ -77,21 +80,18 @@ def test_subtype_model_uses_split_group_parameters(tmp_path) -> None:
                     "hr_16_18": {
                         "label": "HPV 16/18",
                         "initial_weight": 0.5,
-                        "infection_weight": 0.2,
                         "persistence_multiplier": 1.4,
                         "cancer_progression_multiplier": 2.0,
                     },
                     "hr_31_33_45_52_58": {
                         "label": "HPV 31/33/45/52/58",
                         "initial_weight": 0.3,
-                        "infection_weight": 0.5,
                         "persistence_multiplier": 1.0,
                         "cancer_progression_multiplier": 0.8,
                     },
                     "hr_other": {
                         "label": "Other high-risk HPV",
                         "initial_weight": 0.2,
-                        "infection_weight": 0.3,
                         "persistence_multiplier": 0.7,
                         "cancer_progression_multiplier": 0.4,
                     },
@@ -102,7 +102,6 @@ def test_subtype_model_uses_split_group_parameters(tmp_path) -> None:
     model = AgeSexSubtypeGroupedHPVModel(config)
 
     np.testing.assert_allclose(model.initial_group_weights, [0.5, 0.3, 0.2])
-    np.testing.assert_allclose(model.infection_group_weights, [0.2, 0.5, 0.3])
     np.testing.assert_allclose(model.persistence_multipliers, [1.4, 1.0, 0.7])
     np.testing.assert_allclose(model.cancer_progression_multipliers, [2.0, 0.8, 0.4])
 
@@ -156,3 +155,55 @@ def test_nonavalent_outperforms_bivalent_in_subtype_model(tmp_path) -> None:
     nonavalent_result = evaluator.evaluate(nonavalent_model.simulate(), reference)
 
     assert nonavalent_result.incidence[-1] <= bivalent_result.incidence[-1]
+
+
+def test_simulation_accepts_full_state_path_as_initial_state(tmp_path) -> None:
+    config = _small_subtype_config(tmp_path)
+    model = AgeSexSubtypeGroupedHPVModel(config)
+    first_result = model.simulate()
+
+    init_state_path = tmp_path / "stable_init.npy"
+    np.save(init_state_path, first_result.state[-1].reshape(-1))
+
+    config_with_init = SubtypeGroupedModelConfig(
+        **(
+            config.model_dump(mode="python")
+            | {"simulation": config.simulation.model_dump(mode="python")}
+        )
+    )
+    config_with_init = SubtypeGroupedModelConfig(
+        **(
+            config_with_init.model_dump(mode="python")
+            | {
+                "simulation": {
+                    **config_with_init.simulation.model_dump(mode="python"),
+                    "init_state_path": str(init_state_path),
+                }
+            }
+        )
+    )
+    restarted_model = AgeSexSubtypeGroupedHPVModel(config_with_init)
+    restarted = restarted_model.simulate()
+
+    np.testing.assert_allclose(
+        restarted.state[0].reshape(-1),
+        first_result.state[-1].reshape(-1),
+        rtol=1e-8,
+        atol=1e-8,
+    )
+
+
+def test_find_initial_bracket_returns_none_when_target_unreachable() -> None:
+    module_path = Path(__file__).resolve().parents[1] / "find_intital.py"
+    spec = importlib.util.spec_from_file_location("find_intital", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("failed to load find_intital.py for testing")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    coarse_results = [
+        (0.0, 1.0e-8),
+        (0.1, 2.0e-8),
+        (0.2, 1.5e-8),
+    ]
+    assert module._find_bracket(coarse_results, 4.0e-5) is None

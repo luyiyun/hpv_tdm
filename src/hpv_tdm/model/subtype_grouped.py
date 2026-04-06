@@ -23,13 +23,6 @@ class AgeSexSubtypeGroupedHPVModel(BaseHPVTransmissionModel):
         self.initial_group_weights = (
             self.initial_group_weights / self.initial_group_weights.sum()
         )
-        self.infection_group_weights = np.asarray(
-            [config.subtype_groups[name].infection_weight for name in self.group_names],
-            dtype=float,
-        )
-        self.infection_group_weights = (
-            self.infection_group_weights / self.infection_group_weights.sum()
-        )
         self.persistence_multipliers = np.asarray(
             [
                 config.subtype_groups[name].persistence_multiplier
@@ -232,16 +225,10 @@ class AgeSexSubtypeGroupedHPVModel(BaseHPVTransmissionModel):
             where=Ntm[None, :] > 0,
         )
         alpha_f = (
-            self.epsilon_f
-            * self.omega_f[None, :]
-            * np.dot(infectious_m, self.rho.T)
-            * self.infection_group_weights[:, None]
+            self.epsilon_f * self.omega_f[None, :] * np.dot(infectious_m, self.rho.T)
         )
         alpha_m = (
-            self.epsilon_m
-            * self.omega_m[None, :]
-            * np.dot(infectious_f, self.rho.T)
-            * self.infection_group_weights[:, None]
+            self.epsilon_m * self.omega_m[None, :] * np.dot(infectious_f, self.rho.T)
         )
         psi = self._resolve_callable_or_array(self.psi, t)
         alpha_f_from_s = alpha_f * (1 - psi[None, :]) if self.vacc_prefer else alpha_f
@@ -327,12 +314,7 @@ class AgeSexSubtypeGroupedHPVModel(BaseHPVTransmissionModel):
         )
         dPm = (
             self.beta_I * self.persistence_multipliers[:, None] * Im
-            - (
-                self.beta_P * self.cancer_progression_multipliers[:, None]
-                + self.gamma_P
-                + self.dcq_m[None, :]
-            )
-            * Pm
+            - (self.gamma_P + self.dcq_m[None, :]) * Pm
         )
         dRm = (
             self.gamma_I * Im

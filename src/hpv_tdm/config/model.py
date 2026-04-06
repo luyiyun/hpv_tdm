@@ -597,11 +597,6 @@ class SubtypeGroupConfig(ConfigBase):
         gt=0,
         description="初始感染状态在该亚型组中的分配权重。",
     )
-    infection_weight: float = Field(
-        default=1.0,
-        gt=0,
-        description="新发感染在该亚型组中的分配权重。",
-    )
     persistence_multiplier: float = Field(
         default=1.0,
         gt=0,
@@ -616,36 +611,33 @@ class SubtypeGroupConfig(ConfigBase):
 
 def _default_subtype_groups() -> dict[str, SubtypeGroupConfig]:
     # 默认值改为全国口径：
-    # 1. 初始/新发感染权重来自 BMC Medicine 2025 全国汇总分析中各高危型别的
+    # 1. 初始感染权重来自 BMC Medicine 2025 全国汇总分析中各高危型别的
     #    型别流行率，并按当前三组合并后重新归一化：
     #    16/18 = (2.15 + 0.74) / 19.65 = 0.147
     #    31/33/45/52/58 = (0.83 + 0.91 + 0.41 + 4.40 + 2.65) / 19.65 = 0.468
     #    other hr = 0.385
     # 2. persistence_multiplier 使用中国 CIN1/CIN2/CIN3 组别分布的等权平均
-    #    相对全国感染分布的富集比构造。
+    #    相对全国感染分布的富集比构造，并保证以感染分布加权平均后为 1。
     # 3. cancer_progression_multiplier 使用中国宫颈癌组别分布相对上述
-    #    precursor 等权平均分布的富集比构造。
+    #    precursor 等权平均分布的富集比构造，并保证以 precursor 分布加权平均后为 1。
     return {
         "hr_16_18": SubtypeGroupConfig(
             label="HPV 16/18",
             initial_weight=0.147,
-            infection_weight=0.147,
-            persistence_multiplier=2.62,
-            cancer_progression_multiplier=1.77,
+            persistence_multiplier=2.616,
+            cancer_progression_multiplier=1.768,
         ),
         "hr_31_33_45_52_58": SubtypeGroupConfig(
             label="HPV 31/33/45/52/58",
             initial_weight=0.468,
-            infection_weight=0.468,
-            persistence_multiplier=0.93,
-            cancer_progression_multiplier=0.49,
+            persistence_multiplier=0.931,
+            cancer_progression_multiplier=0.492,
         ),
         "hr_other": SubtypeGroupConfig(
             label="Other high-risk HPV",
             initial_weight=0.385,
-            infection_weight=0.385,
-            persistence_multiplier=0.47,
-            cancer_progression_multiplier=0.59,
+            persistence_multiplier=0.467,
+            cancer_progression_multiplier=0.587,
         ),
     }
 
@@ -682,11 +674,6 @@ class SubtypeGroupedModelConfig(AggregateModelConfig):
         initial_weight_sum = sum(
             group.initial_weight for group in self.subtype_groups.values()
         )
-        infection_weight_sum = sum(
-            group.infection_weight for group in self.subtype_groups.values()
-        )
         if initial_weight_sum <= 0:
             raise ValueError("subtype initial weights must be positive")
-        if infection_weight_sum <= 0:
-            raise ValueError("subtype infection weights must be positive")
         return self

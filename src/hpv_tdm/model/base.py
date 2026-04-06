@@ -224,6 +224,18 @@ class BaseHPVTransmissionModel(ODESystemModel):
             init = np.load(init_state)
         else:
             init = np.asarray(init_state, dtype=float)
+        if self.cal_cumulate:
+            cumulative_size = self.nages * len(self.cumulative_state_spec)
+            if init.size == self.ndim:
+                # 允许直接传入“主状态”向量，此时自动补零累计量，便于重启模拟。
+                init = np.concatenate([init, np.zeros(cumulative_size, dtype=float)])
+            elif init.size != self.ndim + cumulative_size:
+                raise ValueError(
+                    "init_state size must match either the main state vector "
+                    "or the full state-plus-cumulative vector"
+                )
+        elif init.size != self.ndim:
+            raise ValueError("init_state size must match the main state vector")
         resolved_t_span = t_span or tuple(self.config.simulation.t_span)
         resolved_n_eval = self.config.simulation.n_eval if n_eval is None else n_eval
         resolved_backend = backend or self.config.transmission.backend

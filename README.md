@@ -20,10 +20,9 @@
     - `hr_31_33_45_52_58`
     - `hr_other`
  - 当前第一版不显式建模共感染
-  - 当前第一版不纳入 `6/11`
+ - 当前第一版不纳入 `6/11`
   - `SubtypeGrouped` 默认将亚型相关参数拆成：
     - 初始感染权重 `initial_weight`
-    - 新发感染权重 `infection_weight`
     - 持续感染倍率 `persistence_multiplier`
     - 癌症进展倍率 `cancer_progression_multiplier`
 
