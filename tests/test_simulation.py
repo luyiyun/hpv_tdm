@@ -4,6 +4,7 @@ import importlib.util
 from pathlib import Path
 
 import numpy as np
+from optuna.trial import FixedTrial
 
 from hpv_tdm import (
     AgeSexAggregateHPVModel,
@@ -207,3 +208,48 @@ def test_find_initial_bracket_returns_none_when_target_unreachable() -> None:
         (0.2, 1.5e-8),
     ]
     assert module._find_bracket(coarse_results, 4.0e-5) is None
+
+
+def test_find_params_ignores_existing_init_state_path_during_calibration(
+    tmp_path,
+) -> None:
+    module_path = Path(__file__).resolve().parents[1] / "find_params.py"
+    spec = importlib.util.spec_from_file_location("find_params", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("failed to load find_params.py for testing")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    existing_init_path = tmp_path / "existing_init.npy"
+    np.save(existing_init_path, np.zeros(10, dtype=float))
+
+    base_config = SubtypeGroupedModelConfig(
+        population={"total_female": 50_000, "total_male": 50_000},
+        simulation={
+            "t_span": (0.0, 20.0),
+            "n_eval": 11,
+            "save_last_state": False,
+            "generate_plots": False,
+            "init_state_path": str(existing_init_path),
+        },
+        vaccination={"coverage_by_age": [0.0] * 26},
+    )
+    params_config = module.FindParamsConfig()
+    trial = FixedTrial(
+        {
+            "initial_weight_raw__hr_16_18": 0.147,
+            "initial_weight_raw__hr_31_33_45_52_58": 0.468,
+            "initial_weight_raw__hr_other": 0.385,
+            "persistence_multiplier__hr_16_18": 1.0,
+            "cancer_progression_multiplier__hr_16_18": 1.0,
+            "persistence_multiplier__hr_31_33_45_52_58": 1.0,
+            "cancer_progression_multiplier__hr_31_33_45_52_58": 1.0,
+            "persistence_multiplier__hr_other": 1.0,
+            "cancer_progression_multiplier__hr_other": 1.0,
+            "initial_infectious_ratio": 0.01,
+        }
+    )
+
+    candidate = module._candidate_config(base_config, params_config, trial)
+
+    assert candidate.simulation.init_state_path is None

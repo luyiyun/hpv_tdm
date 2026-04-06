@@ -1,0 +1,45 @@
+{
+  "study_name": "hpv_tdm_find_params",
+  "storage_filename": "study.db",
+  "seed": 1234,
+  "n_trials": 1000,
+  "n_jobs": 10,
+  "time_horizon": 200.0,
+  "n_eval": 201,
+  "tail_years": 20.0,
+  "disable_vaccination_during_calibration": true,
+  "target_incidence_per_100k": 16.56,
+  "target_infection_share_by_group": {
+    "hr_16_18": 0.147,
+    "hr_31_33_45_52_58": 0.468,
+    "hr_other": 0.385
+  },
+  "target_cancer_share_by_group": {
+    "hr_16_18": 0.680,
+    "hr_31_33_45_52_58": 0.214,
+    "hr_other": 0.105
+  },
+  "objective_weights": {
+    "incidence": 1.0,
+    "infection_share": 1.0,
+    "cancer_share": 1.0
+  },
+  "bounds": {
+    "initial_infectious_ratio": [
+      0.0001,
+      0.5
+    ],
+    "initial_weight_raw": [
+      0.05,
+      10.0
+    ],
+    "persistence_multiplier": [
+      0.05,
+      10.0
+    ],
+    "cancer_progression_multiplier": [
+      0.05,
+      10.0
+    ]
+  }
+}

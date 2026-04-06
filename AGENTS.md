@@ -19,6 +19,19 @@
   - 包外脚本入口
   - 负责读取 `ModelConfig` / `EvaluationConfig` / `SearchConfig`
   - 像普通使用者一样实例化 `Model`、`Evaluator`、`Searcher` 并运行
+- `find_intital.py`
+  - 包外脚本入口
+  - 用于仅通过调整初始感染比例来寻找与目标发病率接近的稳态初始值
+  - 若目标在当前参数下不可达，应直接报错，不输出误导性的初始状态结果
+- `find_params.py`
+  - 包外脚本入口
+  - 用于通过长时程模拟 + Optuna 搜索联合校准 subgroup 模型中的初始状态与亚型参数
+  - 当前主要校准：
+    - `initial_infectious_ratio`
+    - `subtype_groups.*.initial_weight`
+    - `subtype_groups.*.persistence_multiplier`
+    - `subtype_groups.*.cancer_progression_multiplier`
+  - 当前只支持 `subtype_grouped` 模型
 - `src/hpv_tdm/config`
   - Pydantic 配置对象
   - 公开入口收敛为：
@@ -187,6 +200,12 @@
 - `search.py`
   - 对应“通过贝叶斯优化搜索最优接种策略”
   - 结果输出到 `results/`
+- `find_intital.py`
+  - 对应“在固定模型参数下，通过调整初始感染比例寻找稳态初始值”
+  - 结果输出到 `results/`
+- `find_params.py`
+  - 对应“通过长时程模拟拟合 subgroup 模型参数，使总发病率、感染亚型占比和癌症亚型占比尽量接近目标”
+  - 结果输出到 `results/`
 - `experiments`
   - 对应“在已有结果基础上做进一步分析和论文图表绘制”
 
@@ -198,7 +217,19 @@
 uv sync --all-extras --dev
 uv run simulate.py --model-config conf/simulate.json --evaluation-config conf/evaluation.json
 uv run search.py --model-config conf/simulate.json --evaluation-config conf/evaluation.json --search-config conf/search.json
+uv run find_intital.py --model-config conf/simulate.json --target-incidence-per-100k 16.56 --output-dir results/find-initial
+uv run find_params.py --model-config conf/simulate.json --params-config conf/find_params.json --output-dir results/find-params
 uv run pytest
 uv run ruff check .
 uv run ruff format .
 ```
+
+## 校准脚本注意事项
+
+- `find_params.py` 在生成候选参数时，必须显式忽略传入 `model-config` 中已有的 `simulation.init_state_path`
+  - 否则会错误复用旧的稳态文件，污染 `initial_infectious_ratio` 和 subgroup 参数拟合
+- `find_params.py` 当前的目标函数由三部分组成：
+  - 总宫颈癌发病率误差
+  - 感染亚型占比误差
+  - 宫颈癌亚型占比误差
+- `find_params.py` 默认会在校准时关闭接种，以优先拟合自然史稳态

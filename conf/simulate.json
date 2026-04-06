@@ -377,7 +377,7 @@
       100.0
     ],
     "n_eval": 101,
-    "init_state_path": "/home/rongzw/projects/hpv_tdm/results/find-inital-subgroups/initial_state.npy",
+    "init_state_path": null,
     "save_last_state": true,
     "generate_plots": true
   },
