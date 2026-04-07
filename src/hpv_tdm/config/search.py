@@ -7,7 +7,43 @@ from pydantic import Field, field_validator
 from .base import ConfigBase
 
 
+class WeightedSumObjectiveConfig(ConfigBase):
+    icur_weight: float = Field(
+        default=1.0,
+        ge=0.0,
+        description="单目标加权搜索中 ICUR 项的权重。",
+    )
+    incidence_weight: float = Field(
+        default=1.0,
+        ge=0.0,
+        description="单目标加权搜索中发病率项的权重。",
+    )
+    transform: Literal["ratio", "log_ratio"] = Field(
+        default="log_ratio",
+        description=(
+            "单目标加权搜索中归一化后的变换方式。"
+            "`ratio` 直接使用比例值，`log_ratio` 使用带符号对数压缩量级。"
+        ),
+    )
+    icur_scale: float = Field(
+        default=1_000_000.0,
+        gt=0.0,
+        description="单目标加权搜索中 ICUR 的参考尺度，用于归一化。",
+    )
+    incidence_scale: float | None = Field(
+        default=None,
+        description=(
+            "单目标加权搜索中发病率的参考尺度；为空时自动使用 "
+            "`SearchConfig.incidence_threshold`。"
+        ),
+    )
+
+
 class SearchConfig(ConfigBase):
+    objective_mode: Literal["multi_objective", "weighted_sum", "constrained"] = Field(
+        default="multi_objective",
+        description="搜索目标模式：多目标搜索、单目标加权搜索或约束优化。",
+    )
     seed: int = Field(
         default=1234,
         description="Optuna 搜索的随机种子。",
@@ -60,6 +96,10 @@ class SearchConfig(ConfigBase):
     product_ids: list[str] | None = Field(
         default=None,
         description="允许参与搜索的疫苗产品编号列表；为空时使用模型疫苗目录全部产品。",
+    )
+    weighted_sum: WeightedSumObjectiveConfig = Field(
+        default_factory=WeightedSumObjectiveConfig,
+        description="单目标加权搜索所需的归一化与权重配置。",
     )
 
     @field_validator("strategy", mode="before")

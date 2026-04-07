@@ -40,17 +40,34 @@ class SearchResult:
         self.best_evaluation = best_evaluation
         self.best_trial = best_trial
 
+    def _trial_icur(self, trial: optuna.trial.FrozenTrial) -> float:
+        if "icur" in trial.user_attrs:
+            return float(trial.user_attrs["icur"])
+        return float(trial.values[0])
+
+    def _trial_incidence(self, trial: optuna.trial.FrozenTrial) -> float:
+        if "incidence" in trial.user_attrs:
+            return float(trial.user_attrs["incidence"])
+        if len(trial.values) > 1:
+            return float(trial.values[1])
+        raise ValueError("trial does not contain raw incidence information")
+
     def summary_table(self) -> pd.DataFrame:
         payload: dict[str, Any] = {
             "study_name": self.config.study_name,
+            "objective_mode": self.config.objective_mode,
             "n_trials": len(self.study.trials),
             "incidence_threshold": self.config.incidence_threshold,
             "has_best_trial": self.best_trial is not None,
         }
         if self.best_trial is not None:
             payload["best_trial_number"] = self.best_trial.number
-            payload["best_icur"] = self.best_trial.values[0]
-            payload["best_incidence"] = self.best_trial.values[1]
+            payload["best_icur"] = self._trial_icur(self.best_trial)
+            payload["best_incidence"] = self._trial_incidence(self.best_trial)
+            if self.config.objective_mode == "weighted_sum":
+                payload["best_scalarized_objective"] = self.best_trial.values[0]
+            if self.config.objective_mode == "constrained":
+                payload["best_objective"] = self.best_trial.values[0]
             for key, value in self.best_trial.params.items():
                 payload[f"param_{key}"] = value
         return pd.DataFrame([payload])
@@ -64,7 +81,7 @@ class SearchResult:
         ]
         axes[0].plot(
             [trial.number for trial in completed_trials],
-            [trial.values[0] for trial in completed_trials],
+            [self._trial_icur(trial) for trial in completed_trials],
             marker="o",
             linestyle="-",
             color="#2C7FB8",
@@ -76,7 +93,7 @@ class SearchResult:
         axes[0].set_ylabel("ICUR")
         axes[1].plot(
             [trial.number for trial in completed_trials],
-            [trial.values[1] for trial in completed_trials],
+            [self._trial_incidence(trial) for trial in completed_trials],
             marker="o",
             linestyle="-",
             color="#D1495B",
@@ -108,6 +125,7 @@ class SearchResult:
             }
         )
         pareto_numbers = {trial.number for trial in self.study.best_trials}
+        best_number = None if self.best_trial is None else self.best_trial.number
         for product_id in product_ids:
             product_trials = [
                 trial
@@ -117,20 +135,22 @@ class SearchResult:
             if not product_trials:
                 continue
             ax.scatter(
-                [trial.values[1] for trial in product_trials],
-                [trial.values[0] for trial in product_trials],
+                [self._trial_incidence(trial) for trial in product_trials],
+                [self._trial_icur(trial) for trial in product_trials],
                 color=PRODUCT_COLORS.get(product_id, "#6C757D"),
                 alpha=0.7,
                 s=36,
                 linewidths=0,
             )
-            front_trials = [
-                trial for trial in product_trials if trial.number in pareto_numbers
-            ]
-            if front_trials:
+            highlight_trials = (
+                [trial for trial in product_trials if trial.number in pareto_numbers]
+                if self.config.objective_mode == "multi_objective"
+                else [trial for trial in product_trials if trial.number == best_number]
+            )
+            if highlight_trials:
                 ax.scatter(
-                    [trial.values[1] for trial in front_trials],
-                    [trial.values[0] for trial in front_trials],
+                    [self._trial_incidence(trial) for trial in highlight_trials],
+                    [self._trial_icur(trial) for trial in highlight_trials],
                     color=PRODUCT_COLORS.get(product_id, "#6C757D"),
                     marker="*",
                     s=140,
@@ -139,7 +159,11 @@ class SearchResult:
                 )
         ax.set_xlabel("Incidence")
         ax.set_ylabel("ICUR")
-        ax.set_title("Pareto Front")
+        ax.set_title(
+            "Pareto Front"
+            if self.config.objective_mode == "multi_objective"
+            else "Search Results"
+        )
         vaccine_handles = [
             Line2D(
                 [0],
@@ -172,7 +196,15 @@ class SearchResult:
                 markerfacecolor="#444444",
                 markeredgecolor="#202020",
                 markersize=11,
-                label="pareto front",
+                label=(
+                    "pareto front"
+                    if self.config.objective_mode == "multi_objective"
+                    else (
+                        "best feasible trial"
+                        if self.config.objective_mode == "constrained"
+                        else "best trial"
+                    )
+                ),
             ),
         ]
         ax.legend(
