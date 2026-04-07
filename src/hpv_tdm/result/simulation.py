@@ -126,7 +126,7 @@ class SimulationResult:
             ax.plot(self.time, values)
         ax.set_xlabel("Time")
         ax.set_ylabel("Incidence")
-        ax.set_title("HPV Incidence")
+        ax.set_title("Cervical Cancer Incidence")
         if log:
             ax.set_yscale("log")
         else:

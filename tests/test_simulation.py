@@ -4,6 +4,7 @@ import importlib.util
 from pathlib import Path
 
 import numpy as np
+import pytest
 from optuna.trial import FixedTrial
 
 from hpv_tdm import (
@@ -253,3 +254,64 @@ def test_find_params_ignores_existing_init_state_path_during_calibration(
     candidate = module._candidate_config(base_config, params_config, trial)
 
     assert candidate.simulation.init_state_path is None
+
+
+def test_find_params_trend_helper_reports_positive_slope() -> None:
+    module_path = Path(__file__).resolve().parents[1] / "find_params.py"
+    spec = importlib.util.spec_from_file_location("find_params", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("failed to load find_params.py for testing")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    time = np.array([0.0, 5.0, 10.0, 15.0], dtype=float)
+    incidence = np.array([1.0e-4, 1.2e-4, 1.4e-4, 1.6e-4], dtype=float)
+
+    slope = module._incidence_trend_per_100k_per_year(
+        time,
+        incidence,
+        window_years=10.0,
+    )
+
+    assert slope > 0.0
+
+
+def test_find_params_sampler_selection_and_missing_cmaes_error() -> None:
+    module_path = Path(__file__).resolve().parents[1] / "find_params.py"
+    spec = importlib.util.spec_from_file_location("find_params", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("failed to load find_params.py for testing")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    tpe_config = module.FindParamsConfig(optimizer="tpe")
+    sampler = module._build_sampler(tpe_config)
+    assert sampler.__class__.__name__ == "TPESampler"
+
+    original_find_spec = module.importlib.util.find_spec
+    module.importlib.util.find_spec = lambda name: (
+        None if name == "cmaes" else original_find_spec(name)
+    )
+    try:
+        with pytest.raises(ModuleNotFoundError, match="requires the 'cmaes' package"):
+            module._build_sampler(module.FindParamsConfig(optimizer="cmaes"))
+    finally:
+        module.importlib.util.find_spec = original_find_spec
+
+
+def test_simulate_time_horizon_override_updates_config() -> None:
+    module_path = Path(__file__).resolve().parents[1] / "simulate.py"
+    spec = importlib.util.spec_from_file_location("simulate_script", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("failed to load simulate.py for testing")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    config = AggregateModelConfig(
+        simulation={"t_span": (0.0, 100.0)},
+        vaccination={"coverage_by_age": [0.0] * 26},
+    )
+
+    overridden = module._override_time_horizon(config, 60.0)
+
+    assert overridden.simulation.t_span == (0.0, 60.0)

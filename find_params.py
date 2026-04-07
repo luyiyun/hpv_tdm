@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import optuna
@@ -28,6 +30,11 @@ class ObjectiveWeightsConfig(ConfigBase):
         ge=0.0,
         description="癌症亚型占比误差在目标函数中的权重。",
     )
+    incidence_trend: float = Field(
+        default=10.0,
+        ge=0.0,
+        description="末期宫颈癌发病率趋势约束在目标函数中的权重。",
+    )
 
 
 class SearchBoundsConfig(ConfigBase):
@@ -50,6 +57,10 @@ class SearchBoundsConfig(ConfigBase):
 
 
 class FindParamsConfig(ConfigBase):
+    optimizer: Literal["tpe", "cmaes"] = Field(
+        default="cmaes",
+        description="参数校准使用的优化算法，可选 tpe 或 cmaes。",
+    )
     study_name: str = Field(
         default="hpv_tdm_find_params",
         description="Optuna study 名称。",
@@ -87,6 +98,11 @@ class FindParamsConfig(ConfigBase):
         gt=0.0,
         description="用来计算稳态指标的尾部平均时间窗口，单位为年。",
     )
+    trend_window_years: float = Field(
+        default=10.0,
+        gt=0.0,
+        description="用来约束末期宫颈癌发病率趋势的时间窗口，单位为年。",
+    )
     disable_vaccination_during_calibration: bool = Field(
         default=True,
         description="参数校准时是否关闭接种策略，以便先拟合自然史稳态。",
@@ -111,6 +127,13 @@ class FindParamsConfig(ConfigBase):
         },
         description="目标宫颈癌亚型占比，键为亚型组名，值为目标比例。",
     )
+    min_incidence_slope_per_100k_per_year: float = Field(
+        default=0.0,
+        description=(
+            "末期宫颈癌发病率趋势下限，单位为每 10 万女性每年。"
+            "默认要求末期趋势至少持平。"
+        ),
+    )
     objective_weights: ObjectiveWeightsConfig = Field(
         default_factory=ObjectiveWeightsConfig,
         description="不同拟合目标在总损失中的权重。",
@@ -124,6 +147,8 @@ class FindParamsConfig(ConfigBase):
     def validate_targets(self) -> "FindParamsConfig":
         if self.tail_years >= self.time_horizon:
             raise ValueError("tail_years must be smaller than time_horizon")
+        if self.trend_window_years >= self.time_horizon:
+            raise ValueError("trend_window_years must be smaller than time_horizon")
         if sum(self.target_infection_share_by_group.values()) <= 0:
             raise ValueError(
                 "target_infection_share_by_group must sum to a positive value"
@@ -156,6 +181,16 @@ def _load_model_config(path: str | Path) -> SubtypeGroupedModelConfig:
             "find_params.py currently only supports subtype_grouped models"
         )
     return config
+
+
+def _build_sampler(params_config: FindParamsConfig) -> optuna.samplers.BaseSampler:
+    if params_config.optimizer == "tpe":
+        return optuna.samplers.TPESampler(seed=params_config.seed)
+    if importlib.util.find_spec("cmaes") is None:
+        raise ModuleNotFoundError(
+            "optimizer='cmaes' requires the 'cmaes' package to be installed"
+        )
+    return optuna.samplers.CmaEsSampler(seed=params_config.seed)
 
 
 def _candidate_config(
@@ -275,14 +310,35 @@ def _total_incidence(
     state: np.ndarray,
     mask: np.ndarray,
 ) -> float:
+    values = _cervical_cancer_incidence_series(model, state)
+    return float(np.mean(values[mask]))
+
+
+def _cervical_cancer_incidence_series(
+    model: AgeSexSubtypeGroupedHPVModel,
+    state: np.ndarray,
+) -> np.ndarray:
     female_population = model.total_female_population(state).sum(axis=1)
-    values = np.divide(
+    return np.divide(
         model.incidence_matrix(state).sum(axis=1),
         female_population,
         out=np.zeros(state.shape[0], dtype=float),
         where=female_population > 0,
     )
-    return float(np.mean(values[mask]))
+
+
+def _incidence_trend_per_100k_per_year(
+    time: np.ndarray,
+    incidence_series: np.ndarray,
+    *,
+    window_years: float,
+) -> float:
+    trend_start = float(time[-1] - window_years)
+    mask = time >= trend_start
+    if np.count_nonzero(mask) < 2:
+        raise ValueError("trend window must include at least two evaluation points")
+    slope, _ = np.polyfit(time[mask], incidence_series[mask] * 100_000.0, deg=1)
+    return float(slope)
 
 
 def _mean_square_error(
@@ -311,6 +367,11 @@ def _summary_payload(
         "matched_infection_share_by_group": metrics["infection_share_by_group"],
         "target_cancer_share_by_group": params_config.target_cancer_share_by_group,
         "matched_cancer_share_by_group": metrics["cancer_share_by_group"],
+        "trend_window_years": params_config.trend_window_years,
+        "min_incidence_slope_per_100k_per_year": (
+            params_config.min_incidence_slope_per_100k_per_year
+        ),
+        "matched_incidence_slope_per_100k_per_year": metrics["incidence_trend"],
         "objective": metrics["objective"],
         "initial_infectious_ratio": metrics["initial_infectious_ratio"],
         "best_params": best_params,
@@ -372,7 +433,7 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     params_config.to_json_file(output_dir / "find_params_config.json")
 
-    sampler = optuna.samplers.TPESampler(seed=params_config.seed)
+    sampler = _build_sampler(params_config)
     storage_path = output_dir / params_config.storage_filename
     study = optuna.create_study(
         study_name=params_config.study_name,
@@ -395,6 +456,11 @@ def main() -> None:
         cancer_share = _cancer_share_by_group(model, result.state, mask)
         incidence = _total_incidence(model, result.state, mask)
         incidence_per_100k = incidence * 100_000.0
+        incidence_trend = _incidence_trend_per_100k_per_year(
+            result.time,
+            _cervical_cancer_incidence_series(model, result.state),
+            window_years=params_config.trend_window_years,
+        )
 
         incidence_error = (
             (incidence_per_100k - params_config.target_incidence_per_100k)
@@ -408,14 +474,31 @@ def main() -> None:
             cancer_share,
             params_config.target_cancer_share_by_group,
         )
+        trend_error = 0.0
+        if incidence_trend < params_config.min_incidence_slope_per_100k_per_year:
+            # 若末期趋势持续下降，则给出强惩罚，
+            # 避免把会自动消退到极低水平的参数选为最优。
+            trend_error = (
+                1.0
+                + (
+                    params_config.min_incidence_slope_per_100k_per_year
+                    - incidence_trend
+                )
+                ** 2
+            )
         objective_value = (
             params_config.objective_weights.incidence * incidence_error
             + params_config.objective_weights.infection_share * infection_error
             + params_config.objective_weights.cancer_share * cancer_error
+            + params_config.objective_weights.incidence_trend * trend_error
         )
         trial.set_user_attr("incidence_per_100k", incidence_per_100k)
         trial.set_user_attr("infection_share_by_group", infection_share)
         trial.set_user_attr("cancer_share_by_group", cancer_share)
+        trial.set_user_attr(
+            "incidence_slope_per_100k_per_year",
+            incidence_trend,
+        )
         return float(objective_value)
 
     study.optimize(
@@ -439,6 +522,11 @@ def main() -> None:
     cancer_share = _cancer_share_by_group(best_model, best_result.state, mask)
     incidence = _total_incidence(best_model, best_result.state, mask)
     incidence_per_100k = incidence * 100_000.0
+    incidence_trend = _incidence_trend_per_100k_per_year(
+        best_result.time,
+        _cervical_cancer_incidence_series(best_model, best_result.state),
+        window_years=params_config.trend_window_years,
+    )
 
     initial_state_path = output_dir / "initial_state.npy"
     np.save(initial_state_path, best_result.state[-1].reshape(-1))
@@ -472,6 +560,7 @@ def main() -> None:
         "incidence_per_100k": float(incidence_per_100k),
         "infection_share_by_group": infection_share,
         "cancer_share_by_group": cancer_share,
+        "incidence_trend": float(incidence_trend),
         "initial_infectious_ratio": float(
             best_trial.params["initial_infectious_ratio"]
         ),
@@ -497,6 +586,11 @@ def main() -> None:
     )
     print(f"  infection_share_by_group: {infection_share}")
     print(f"  cancer_share_by_group: {cancer_share}")
+    print(
+        "  incidence_slope_per_100k_per_year: "
+        f"{incidence_trend:.4f} "
+        f"(minimum {params_config.min_incidence_slope_per_100k_per_year:.4f})"
+    )
     print(f"  calibrated_model_config: {calibrated_model_config_path.resolve()}")
     print(f"  ready_model_config: {ready_model_config_path.resolve()}")
 

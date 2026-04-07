@@ -11,6 +11,7 @@ requires-python = ">=3.10"
 authors = [{ name = "Rong Zhiwei", email = "rongzhiwei@bjmu.edu.cn" }]
 keywords = ["hpv", "vaccination", "transmission dynamics", "bayesian optimization"]
 dependencies = [
+  "cmaes>=0.11.1",
   "h5py>=3.11.0",
   "matplotlib>=3.8.0",
   "numpy>=1.26.0",

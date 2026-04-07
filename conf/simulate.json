@@ -305,35 +305,8 @@
     ]
   },
   "vaccination": {
-    "product_id": "bivalent",
-    "coverage_by_age": [
-      1.0,
-      1.0,
-      1.0,
-      1.0,
-      1.0,
-      1.0,
-      1.0,
-      1.0,
-      1.0,
-      0.0,
-      0.0,
-      0.0,
-      0.0,
-      0.0,
-      0.0,
-      0.0,
-      0.0,
-      0.0,
-      0.0,
-      0.0,
-      0.0,
-      0.0,
-      0.0,
-      0.0,
-      0.0,
-      0.0
-    ]
+    "product_id": null,
+    "coverage_by_age": null
   },
   "vaccine_catalog": {
     "default_product_id": "bivalent",

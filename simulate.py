@@ -33,6 +33,19 @@ def _build_model(model_config):
     return AgeSexSubtypeGroupedHPVModel(model_config)
 
 
+def _override_time_horizon(model_config, time_horizon: float | None):
+    if time_horizon is None:
+        return model_config
+    payload = model_config.model_dump(mode="python")
+    payload["simulation"]["t_span"] = (
+        float(payload["simulation"]["t_span"][0]),
+        float(time_horizon),
+    )
+    if model_config.model_kind == "aggregate":
+        return AggregateModelConfig.model_validate(payload)
+    return SubtypeGroupedModelConfig.model_validate(payload)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run HPV transmission simulation.")
     parser.add_argument(
@@ -47,9 +60,15 @@ def main() -> None:
         default="results/simulate_run",
         help="Directory used to save simulation outputs.",
     )
+    parser.add_argument(
+        "--time-horizon",
+        type=float,
+        help="Optional simulation horizon override in years.",
+    )
     args = parser.parse_args()
 
     model_config = _load_model_config(args.model_config)
+    model_config = _override_time_horizon(model_config, args.time_horizon)
     model = _build_model(model_config)
     simulation_result = model.simulate()
 

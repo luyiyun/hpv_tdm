@@ -128,7 +128,7 @@ class EvaluationResult:
             ax.plot(self.time, self.incidence)
         ax.set_xlabel("Time")
         ax.set_ylabel("Incidence")
-        ax.set_title("HPV Incidence")
+        ax.set_title("Cervical Cancer Incidence")
         if log:
             ax.set_yscale("log")
         else:
