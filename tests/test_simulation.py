@@ -299,6 +299,21 @@ def test_find_params_sampler_selection_and_missing_cmaes_error() -> None:
         module.importlib.util.find_spec = original_find_spec
 
 
+def test_find_params_rejects_invalid_trend_interval() -> None:
+    module_path = Path(__file__).resolve().parents[1] / "find_params.py"
+    spec = importlib.util.spec_from_file_location("find_params", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("failed to load find_params.py for testing")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    with pytest.raises(ValueError, match="must be smaller than or equal to"):
+        module.FindParamsConfig(
+            min_incidence_slope_per_100k_per_year=1.0,
+            max_incidence_slope_per_100k_per_year=0.0,
+        )
+
+
 def test_simulate_time_horizon_override_updates_config() -> None:
     module_path = Path(__file__).resolve().parents[1] / "simulate.py"
     spec = importlib.util.spec_from_file_location("simulate_script", module_path)

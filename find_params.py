@@ -134,6 +134,13 @@ class FindParamsConfig(ConfigBase):
             "默认要求末期趋势至少持平。"
         ),
     )
+    max_incidence_slope_per_100k_per_year: float = Field(
+        default=10.0,
+        description=(
+            "末期宫颈癌发病率趋势上限，单位为每 10 万女性每年。"
+            "用于避免校准得到不合理的快速上升趋势。"
+        ),
+    )
     objective_weights: ObjectiveWeightsConfig = Field(
         default_factory=ObjectiveWeightsConfig,
         description="不同拟合目标在总损失中的权重。",
@@ -156,6 +163,15 @@ class FindParamsConfig(ConfigBase):
         if sum(self.target_cancer_share_by_group.values()) <= 0:
             raise ValueError(
                 "target_cancer_share_by_group must sum to a positive value"
+            )
+        if (
+            self.min_incidence_slope_per_100k_per_year
+            > self.max_incidence_slope_per_100k_per_year
+        ):
+            raise ValueError(
+                "min_incidence_slope_per_100k_per_year must be "
+                "smaller than or equal to "
+                "max_incidence_slope_per_100k_per_year"
             )
         return self
 
@@ -371,6 +387,9 @@ def _summary_payload(
         "min_incidence_slope_per_100k_per_year": (
             params_config.min_incidence_slope_per_100k_per_year
         ),
+        "max_incidence_slope_per_100k_per_year": (
+            params_config.max_incidence_slope_per_100k_per_year
+        ),
         "matched_incidence_slope_per_100k_per_year": metrics["incidence_trend"],
         "objective": metrics["objective"],
         "initial_infectious_ratio": metrics["initial_infectious_ratio"],
@@ -486,6 +505,17 @@ def main() -> None:
                 )
                 ** 2
             )
+        elif incidence_trend > params_config.max_incidence_slope_per_100k_per_year:
+            # 若末期趋势上升过快，同样给出强惩罚，
+            # 保证校准后的自然史更接近持平或缓慢变化。
+            trend_error = (
+                1.0
+                + (
+                    incidence_trend
+                    - params_config.max_incidence_slope_per_100k_per_year
+                )
+                ** 2
+            )
         objective_value = (
             params_config.objective_weights.incidence * incidence_error
             + params_config.objective_weights.infection_share * infection_error
@@ -589,7 +619,12 @@ def main() -> None:
     print(
         "  incidence_slope_per_100k_per_year: "
         f"{incidence_trend:.4f} "
-        f"(minimum {params_config.min_incidence_slope_per_100k_per_year:.4f})"
+        "("
+        f"target range "
+        f"{params_config.min_incidence_slope_per_100k_per_year:.4f}"
+        " to "
+        f"{params_config.max_incidence_slope_per_100k_per_year:.4f}"
+        ")"
     )
     print(f"  calibrated_model_config: {calibrated_model_config_path.resolve()}")
     print(f"  ready_model_config: {ready_model_config_path.resolve()}")

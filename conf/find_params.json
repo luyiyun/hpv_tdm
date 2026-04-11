@@ -11,7 +11,8 @@
   "trend_window_years": 10.0,
   "disable_vaccination_during_calibration": true,
   "target_incidence_per_100k": 16.56,
-  "min_incidence_slope_per_100k_per_year": 0.0,
+  "min_incidence_slope_per_100k_per_year": -0.001,
+  "max_incidence_slope_per_100k_per_year": 0.001,
   "target_infection_share_by_group": {
     "hr_16_18": 0.147,
     "hr_31_33_45_52_58": 0.468,
@@ -25,25 +26,25 @@
   "objective_weights": {
     "incidence": 5.0,
     "infection_share": 1.0,
-    "cancer_share": 1.0,
+    "cancer_share": 5.0,
     "incidence_trend": 5.0
   },
   "bounds": {
     "initial_infectious_ratio": [
       0.0001,
-      0.5
+      0.1
     ],
     "initial_weight_raw": [
-      0.05,
-      10.0
+      0.1,
+      5.0
     ],
     "persistence_multiplier": [
-      0.05,
-      10.0
+      0.1,
+      3.0
     ],
     "cancer_progression_multiplier": [
       0.05,
-      10.0
+      5.0
     ]
   }
 }
