@@ -55,24 +55,24 @@ class AgeSexSubtypeGroupedHPVModel(BaseHPVTransmissionModel):
             dtype=float,
         )
         self.ngroups = len(self.group_names)
-        self._nrooms = 3 + self.ngroups * 9
+        # 共享真实人口分母 + 各亚型组边际风险通道。
+        # 这样不会再让所有亚型组机械性地争抢同一个唯一易感池。
+        self._nrooms = 2 + self.ngroups * 12
         self._ndim = self._nrooms * self.nages
         self._build_indices()
 
     def _build_indices(self) -> None:
         offset = 0
         self._state_index: dict[str, int] = {}
-        self._state_index["Sf"] = offset
+        self._state_index["Nf"] = offset
         offset += 1
-        self._state_index["Vf"] = offset
+        self._state_index["Nm"] = offset
         offset += 1
-        for prefix in ("If", "Pf", "LC", "RC", "DC", "Rf"):
+        for prefix in ("Sf", "Vf", "If", "Pf", "LC", "RC", "DC", "Rf"):
             for group_name in self.group_names:
                 self._state_index[f"{prefix}__{group_name}"] = offset
                 offset += 1
-        self._state_index["Sm"] = offset
-        offset += 1
-        for prefix in ("Im", "Pm", "Rm"):
+        for prefix in ("Sm", "Im", "Pm", "Rm"):
             for group_name in self.group_names:
                 self._state_index[f"{prefix}__{group_name}"] = offset
                 offset += 1
@@ -106,11 +106,10 @@ class AgeSexSubtypeGroupedHPVModel(BaseHPVTransmissionModel):
 
     @property
     def state_spec(self) -> list[str]:
-        names = ["Sf", "Vf"]
-        for prefix in ("If", "Pf", "LC", "RC", "DC", "Rf"):
+        names = ["Nf", "Nm"]
+        for prefix in ("Sf", "Vf", "If", "Pf", "LC", "RC", "DC", "Rf"):
             names.extend(f"{prefix}__{group_name}" for group_name in self.group_names)
-        names.append("Sm")
-        for prefix in ("Im", "Pm", "Rm"):
+        for prefix in ("Sm", "Im", "Pm", "Rm"):
             names.extend(f"{prefix}__{group_name}" for group_name in self.group_names)
         return names
 
@@ -135,39 +134,57 @@ class AgeSexSubtypeGroupedHPVModel(BaseHPVTransmissionModel):
         female_base = self._female_initial_state / self._female_initial_state.sum()
         male_base = self._male_initial_state / self._male_initial_state.sum()
         init = np.zeros((self.nrooms, self.nages), dtype=float)
-        init[self._state_index["Sf"]] = self.P_f * female_base[0]
-        # subtype 模型这里显式采用 8 维女性初始状态：
-        # [Sf, If, Pf, LC, RC, DC, Rf, Vf]
-        init[self._state_index["Vf"]] = self.P_f * female_base[7]
-        init[self._state_index["Sm"]] = self.P_m * male_base[0]
+        init[self._state_index["Nf"]] = self.P_f
+        init[self._state_index["Nm"]] = self.P_m
+        # 这里的 group-specific S/V 状态表示“对该亚型组的边际风险状态”，
+        # 而不是把个体硬分成只能感染一个型别的人群。
         for index, group_name in enumerate(self.group_names):
             initial_weight = self.initial_group_weights[index]
+            if_f = self.P_f * female_base[1] * initial_weight
+            pf_f = self.P_f * female_base[2] * initial_weight
+            lc_f = self.P_f * female_base[3] * initial_weight
+            rc_f = self.P_f * female_base[4] * initial_weight
+            dc_f = self.P_f * female_base[5] * initial_weight
+            rf_f = self.P_f * female_base[6] * initial_weight
+            vf_f = self.P_f * female_base[7]
+            sf_f = self.P_f - (vf_f + if_f + pf_f + lc_f + rc_f + dc_f + rf_f)
+
+            im_m = self.P_m * male_base[1] * initial_weight
+            pm_m = self.P_m * male_base[2] * initial_weight
+            rm_m = self.P_m * male_base[3] * initial_weight
+            sm_m = self.P_m - (im_m + pm_m + rm_m)
+
+            init[self._state_index[f"Sf__{group_name}"]] = sf_f
+            init[self._state_index[f"Vf__{group_name}"]] = vf_f
             init[self._state_index[f"If__{group_name}"]] = (
-                self.P_f * female_base[1] * initial_weight
+                if_f
             )
             init[self._state_index[f"Pf__{group_name}"]] = (
-                self.P_f * female_base[2] * initial_weight
+                pf_f
             )
             init[self._state_index[f"LC__{group_name}"]] = (
-                self.P_f * female_base[3] * initial_weight
+                lc_f
             )
             init[self._state_index[f"RC__{group_name}"]] = (
-                self.P_f * female_base[4] * initial_weight
+                rc_f
             )
             init[self._state_index[f"DC__{group_name}"]] = (
-                self.P_f * female_base[5] * initial_weight
+                dc_f
             )
             init[self._state_index[f"Rf__{group_name}"]] = (
-                self.P_f * female_base[6] * initial_weight
+                rf_f
+            )
+            init[self._state_index[f"Sm__{group_name}"]] = (
+                sm_m
             )
             init[self._state_index[f"Im__{group_name}"]] = (
-                self.P_m * male_base[1] * initial_weight
+                im_m
             )
             init[self._state_index[f"Pm__{group_name}"]] = (
-                self.P_m * male_base[2] * initial_weight
+                pm_m
             )
             init[self._state_index[f"Rm__{group_name}"]] = (
-                self.P_m * male_base[3] * initial_weight
+                rm_m
             )
         flat = init.reshape(-1)
         if self.cal_cumulate:
@@ -188,30 +205,21 @@ class AgeSexSubtypeGroupedHPVModel(BaseHPVTransmissionModel):
     def df_dt(self, t: float, x: np.ndarray) -> np.ndarray:
         state = x[: self.ndim] if self.cal_cumulate else x
         reshaped = state.reshape(self.nrooms, self.nages)
-        Sf = reshaped[self._state_index["Sf"]]
-        Vf = reshaped[self._state_index["Vf"]]
-        Sm = reshaped[self._state_index["Sm"]]
+        Ntf = reshaped[self._state_index["Nf"]]
+        Ntm = reshaped[self._state_index["Nm"]]
+        Sf = self._group_block(reshaped, "Sf")
+        Vf = self._group_block(reshaped, "Vf")
         If = self._group_block(reshaped, "If")
         Pf = self._group_block(reshaped, "Pf")
         LC = self._group_block(reshaped, "LC")
         RC = self._group_block(reshaped, "RC")
         DC = self._group_block(reshaped, "DC")
         Rf = self._group_block(reshaped, "Rf")
+        Sm = self._group_block(reshaped, "Sm")
         Im = self._group_block(reshaped, "Im")
         Pm = self._group_block(reshaped, "Pm")
         Rm = self._group_block(reshaped, "Rm")
 
-        Ntf = (
-            Sf
-            + Vf
-            + If.sum(axis=0)
-            + Pf.sum(axis=0)
-            + LC.sum(axis=0)
-            + RC.sum(axis=0)
-            + DC.sum(axis=0)
-            + Rf.sum(axis=0)
-        )
-        Ntm = Sm + Im.sum(axis=0) + Pm.sum(axis=0) + Rm.sum(axis=0)
         infectious_f = np.divide(
             If + Pf,
             Ntf[None, :],
@@ -236,25 +244,37 @@ class AgeSexSubtypeGroupedHPVModel(BaseHPVTransmissionModel):
 
         born = np.dot(Ntf, self.fertilities)
         born_f, born_m = born * self.lambda_f, born * self.lambda_m
+        total_cecx_death = (
+            self.dL[None, :] * LC + self.dR[None, :] * RC + self.dD[None, :] * DC
+        ).sum(axis=0)
 
-        # 这里仍然采用“共享易感池 + 分亚型感染链”的第一版简化建模。
+        dNf = -(self.dcq_f * Ntf) - total_cecx_death
+        dNf[0] += born_f
+        dNf[1:] += Ntf[:-1] * self.c_f_
+
+        dNm = -(self.dcq_m * Ntm)
+        dNm[0] += born_m
+        dNm[1:] += Ntm[:-1] * self.c_m_
+
+        # 这里改为“共享真实人口分母 + 分亚型组边际风险通道”。
+        # 各组不再机械性地争抢唯一 Sf/Vf，因此能明显减弱假性的型别替代。
         dSf = (
-            self.phi * Rf.sum(axis=0)
-            - (alpha_f_from_s.sum(axis=0) + psi + self.dcq_f) * Sf
+            self.phi * Rf
+            - (alpha_f_from_s + psi[None, :] + self.dcq_f[None, :]) * Sf
         )
-        dSf[0] += born_f
-        dSf[1:] += Sf[:-1] * self.c_f_
+        dSf[:, 0] += born_f
+        dSf[:, 1:] += Sf[:, :-1] * self.c_f_[None, :]
 
-        dVf = psi * Sf - (alpha_vaccinated.sum(axis=0) + self.dcq_f) * Vf
-        dVf[1:] += Vf[:-1] * self.c_f_
+        dVf = psi[None, :] * Sf - (alpha_vaccinated + self.dcq_f[None, :]) * Vf
+        dVf[:, 1:] += Vf[:, :-1] * self.c_f_[None, :]
 
-        dSm = self.phi * Rm.sum(axis=0) - (alpha_m.sum(axis=0) + self.dcq_m) * Sm
-        dSm[0] += born_m
-        dSm[1:] += Sm[:-1] * self.c_m_
+        dSm = self.phi * Rm - (alpha_m + self.dcq_m[None, :]) * Sm
+        dSm[:, 0] += born_m
+        dSm[:, 1:] += Sm[:, :-1] * self.c_m_[None, :]
 
         dIf = (
-            alpha_f_from_s * Sf[None, :]
-            + alpha_vaccinated * Vf[None, :]
+            alpha_f_from_s * Sf
+            + alpha_vaccinated * Vf
             - (
                 self.beta_I * self.persistence_multipliers[:, None]
                 + self.gamma_I
@@ -304,7 +324,7 @@ class AgeSexSubtypeGroupedHPVModel(BaseHPVTransmissionModel):
             - (self.phi + self.dcq_f[None, :]) * Rf
         )
         dIm = (
-            alpha_m * Sm[None, :]
+            alpha_m * Sm
             - (
                 self.beta_I * self.persistence_multipliers[:, None]
                 + self.gamma_I
@@ -332,19 +352,19 @@ class AgeSexSubtypeGroupedHPVModel(BaseHPVTransmissionModel):
         dPm[:, 1:] += Pm[:, :-1] * self.c_m_[None, :]
         dRm[:, 1:] += Rm[:, :-1] * self.c_m_[None, :]
 
-        derivatives = [dSf, dVf]
-        for block in (dIf, dPf, dLC, dRC, dDC, dRf):
+        derivatives = [dNf, dNm]
+        for block in (dSf, dVf, dIf, dPf, dLC, dRC, dDC, dRf):
             derivatives.extend(list(block))
-        derivatives.append(dSm)
-        for block in (dIm, dPm, dRm):
+        for block in (dSm, dIm, dPm, dRm):
             derivatives.extend(list(block))
         flat_derivative = np.concatenate(derivatives)
 
         if self.cal_cumulate:
-            cumulative = [psi * Sf]
+            # 累计接种人数使用各亚型组边际接种流入的平均值，作为实际接种人数的近似。
+            cumulative = [np.mean(psi[None, :] * Sf, axis=0)]
             blocks = (
                 self.phi * Rf,
-                alpha_f_from_s * Sf[None, :] + alpha_vaccinated * Vf[None, :],
+                alpha_f_from_s * Sf + alpha_vaccinated * Vf,
                 self.beta_I * self.persistence_multipliers[:, None] * If,
                 self.beta_P * self.cancer_progression_multipliers[:, None] * Pf,
                 self.beta_LC * self.cancer_progression_multipliers[:, None] * LC,
@@ -378,22 +398,10 @@ class AgeSexSubtypeGroupedHPVModel(BaseHPVTransmissionModel):
         return result
 
     def total_female_population(self, y: np.ndarray) -> np.ndarray:
-        female_indices = [self._state_index["Sf"], self._state_index["Vf"]]
-        female_indices.extend(
-            self._state_index[f"{prefix}__{name}"]
-            for prefix in ("If", "Pf", "LC", "RC", "DC", "Rf")
-            for name in self.group_names
-        )
-        return y[:, female_indices].sum(axis=1)
+        return y[:, self._state_index["Nf"]]
 
     def total_male_population(self, y: np.ndarray) -> np.ndarray:
-        male_indices = [self._state_index["Sm"]]
-        male_indices.extend(
-            self._state_index[f"{prefix}__{name}"]
-            for prefix in ("Im", "Pm", "Rm")
-            for name in self.group_names
-        )
-        return y[:, male_indices].sum(axis=1)
+        return y[:, self._state_index["Nm"]]
 
     def group_incidence_matrix(self, y: np.ndarray) -> dict[str, np.ndarray]:
         return {

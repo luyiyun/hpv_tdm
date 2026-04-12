@@ -108,6 +108,32 @@ def test_subtype_model_uses_split_group_parameters(tmp_path) -> None:
     np.testing.assert_allclose(model.cancer_progression_multipliers, [2.0, 0.8, 0.4])
 
 
+def test_subtype_model_uses_group_specific_marginal_risk_channels(tmp_path) -> None:
+    model = AgeSexSubtypeGroupedHPVModel(_small_subtype_config(tmp_path))
+    init = model.default_initial_state()[: model.ndim].reshape(model.nrooms, model.nages)
+
+    np.testing.assert_allclose(
+        init[model._state_index["Nf"]].sum(),
+        model.P_f.sum(),
+    )
+    np.testing.assert_allclose(
+        init[model._state_index["Nm"]].sum(),
+        model.P_m.sum(),
+    )
+
+    for group_name in model.group_names:
+        female_total = sum(
+            init[model._state_index[f"{prefix}__{group_name}"]]
+            for prefix in ("Sf", "Vf", "If", "Pf", "LC", "RC", "DC", "Rf")
+        )
+        male_total = sum(
+            init[model._state_index[f"{prefix}__{group_name}"]]
+            for prefix in ("Sm", "Im", "Pm", "Rm")
+        )
+        np.testing.assert_allclose(female_total, model.P_f)
+        np.testing.assert_allclose(male_total, model.P_m)
+
+
 def test_evaluator_outputs_absolute_and_incremental_results(tmp_path) -> None:
     config = _small_subtype_config(tmp_path)
     model = AgeSexSubtypeGroupedHPVModel(config)
