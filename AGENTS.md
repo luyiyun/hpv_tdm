@@ -99,13 +99,16 @@
 - 但已不再使用“共享唯一易感池”的强竞争结构
 - 当前改为：
   - 共享真实女性/男性人口分母
+  - 共享女性 persistent-risk pool `Pany`
   - 各亚型组独立的边际风险通道
-  - 以减弱由于共享 `Sf/Vf` 导致的机械性型别替代
+  - 并在癌症事件层采用 competing-risk / single-cause attribution 近似
+  - 以减弱由于共享 `Sf/Vf` 导致的机械性型别替代，并避免癌症事件在各组上直接重复累计
 - 当前与 aggregate 模型一致，女性初始状态向量统一采用 8 维显式语义：
   - `[Sf, If, Pf, LC, RC, DC, Rf, Vf]`
   - subtype 模型会再将 `If/Pf/LC/RC/DC/Rf` 按亚型组权重拆分
 - 当前 subtype 的状态空间中：
   - `Nf` / `Nm` 表示共享真实人口分母
+  - `Pany` 表示“至少存在一个高危组 persistent infection”的共享女性风险池近似
   - `Sf__g` / `Vf__g` / `If__g` / ... 表示亚型组 `g` 的边际风险或疾病状态
   - 这些 group-specific 状态不是互斥人头计数，因此不能在各组上直接求和后当作真实总人口
 - 亚型参数当前明确拆分为：

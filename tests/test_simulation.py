@@ -110,7 +110,10 @@ def test_subtype_model_uses_split_group_parameters(tmp_path) -> None:
 
 def test_subtype_model_uses_group_specific_marginal_risk_channels(tmp_path) -> None:
     model = AgeSexSubtypeGroupedHPVModel(_small_subtype_config(tmp_path))
-    init = model.default_initial_state()[: model.ndim].reshape(model.nrooms, model.nages)
+    init = model.default_initial_state()[: model.ndim].reshape(
+        model.nrooms,
+        model.nages,
+    )
 
     np.testing.assert_allclose(
         init[model._state_index["Nf"]].sum(),

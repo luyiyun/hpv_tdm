@@ -55,9 +55,9 @@ class AgeSexSubtypeGroupedHPVModel(BaseHPVTransmissionModel):
             dtype=float,
         )
         self.ngroups = len(self.group_names)
-        # 共享真实人口分母 + 各亚型组边际风险通道。
-        # 这样不会再让所有亚型组机械性地争抢同一个唯一易感池。
-        self._nrooms = 2 + self.ngroups * 12
+        # 共享真实人口分母 + 共享 persistent-risk pool + 各亚型组边际风险通道。
+        # 这样既能减弱唯一易感池带来的假性替代，又能避免癌症事件直接按各组简单求和。
+        self._nrooms = 3 + self.ngroups * 12
         self._ndim = self._nrooms * self.nages
         self._build_indices()
 
@@ -67,6 +67,8 @@ class AgeSexSubtypeGroupedHPVModel(BaseHPVTransmissionModel):
         self._state_index["Nf"] = offset
         offset += 1
         self._state_index["Nm"] = offset
+        offset += 1
+        self._state_index["Pany"] = offset
         offset += 1
         for prefix in ("Sf", "Vf", "If", "Pf", "LC", "RC", "DC", "Rf"):
             for group_name in self.group_names:
@@ -106,12 +108,58 @@ class AgeSexSubtypeGroupedHPVModel(BaseHPVTransmissionModel):
 
     @property
     def state_spec(self) -> list[str]:
-        names = ["Nf", "Nm"]
+        names = ["Nf", "Nm", "Pany"]
         for prefix in ("Sf", "Vf", "If", "Pf", "LC", "RC", "DC", "Rf"):
             names.extend(f"{prefix}__{group_name}" for group_name in self.group_names)
         for prefix in ("Sm", "Im", "Pm", "Rm"):
             names.extend(f"{prefix}__{group_name}" for group_name in self.group_names)
         return names
+
+    def _union_count(self, block: np.ndarray, total: np.ndarray) -> np.ndarray:
+        fraction = np.divide(
+            block,
+            total[None, :],
+            out=np.zeros_like(block),
+            where=total[None, :] > 0,
+        )
+        fraction = np.clip(fraction, 0.0, 1.0)
+        return total * (1.0 - np.prod(1.0 - fraction, axis=0))
+
+    def _cancer_flow_by_group(
+        self,
+        Pf: np.ndarray,
+        Pany: np.ndarray,
+    ) -> np.ndarray:
+        raw_flow = self.beta_P * self.cancer_progression_multipliers[:, None] * Pf
+        pf_sum = Pf.sum(axis=0)
+        overlap_scale = np.divide(
+            Pany,
+            pf_sum,
+            out=np.zeros_like(Pany),
+            where=pf_sum > 0,
+        )
+        overlap_scale = np.clip(overlap_scale, 0.0, 1.0)
+        return raw_flow * overlap_scale[None, :]
+
+    def _cancer_flow_by_group_timeseries(self, y: np.ndarray) -> np.ndarray:
+        Pf = np.stack(
+            [
+                y[:, self._state_index[f"Pf__{group_name}"]]
+                for group_name in self.group_names
+            ],
+            axis=1,
+        )
+        raw_flow = self.beta_P * self.cancer_progression_multipliers[None, :, None] * Pf
+        pf_sum = Pf.sum(axis=1)
+        Pany = y[:, self._state_index["Pany"]]
+        overlap_scale = np.divide(
+            Pany,
+            pf_sum,
+            out=np.zeros_like(Pany),
+            where=pf_sum > 0,
+        )
+        overlap_scale = np.clip(overlap_scale, 0.0, 1.0)
+        return raw_flow * overlap_scale[:, None, :]
 
     @property
     def cumulative_state_spec(self) -> list[str]:
@@ -186,6 +234,16 @@ class AgeSexSubtypeGroupedHPVModel(BaseHPVTransmissionModel):
             init[self._state_index[f"Rm__{group_name}"]] = (
                 rm_m
             )
+        init[self._state_index["Pany"]] = self._union_count(
+            np.stack(
+                [
+                    init[self._state_index[f"Pf__{group_name}"]]
+                    for group_name in self.group_names
+                ],
+                axis=0,
+            ),
+            self.P_f,
+        )
         flat = init.reshape(-1)
         if self.cal_cumulate:
             flat = np.concatenate(
@@ -207,6 +265,7 @@ class AgeSexSubtypeGroupedHPVModel(BaseHPVTransmissionModel):
         reshaped = state.reshape(self.nrooms, self.nages)
         Ntf = reshaped[self._state_index["Nf"]]
         Ntm = reshaped[self._state_index["Nm"]]
+        Pany = reshaped[self._state_index["Pany"]]
         Sf = self._group_block(reshaped, "Sf")
         Vf = self._group_block(reshaped, "Vf")
         If = self._group_block(reshaped, "If")
@@ -247,6 +306,18 @@ class AgeSexSubtypeGroupedHPVModel(BaseHPVTransmissionModel):
         total_cecx_death = (
             self.dL[None, :] * LC + self.dR[None, :] * RC + self.dD[None, :] * DC
         ).sum(axis=0)
+        raw_persistent_inflow = self.beta_I * self.persistence_multipliers[:, None] * If
+        if_any = self._union_count(If, Ntf)
+        if_sum = If.sum(axis=0)
+        persistent_any_inflow = np.divide(
+            if_any,
+            if_sum,
+            out=np.zeros_like(if_any),
+            where=if_sum > 0,
+        ) * raw_persistent_inflow.sum(axis=0)
+        persistent_any_inflow = np.clip(persistent_any_inflow, 0.0, None)
+        cancer_flow_by_group = self._cancer_flow_by_group(Pf, Pany)
+        cancer_flow_total = cancer_flow_by_group.sum(axis=0)
 
         dNf = -(self.dcq_f * Ntf) - total_cecx_death
         dNf[0] += born_f
@@ -256,8 +327,16 @@ class AgeSexSubtypeGroupedHPVModel(BaseHPVTransmissionModel):
         dNm[0] += born_m
         dNm[1:] += Ntm[:-1] * self.c_m_
 
-        # 这里改为“共享真实人口分母 + 分亚型组边际风险通道”。
-        # 各组不再机械性地争抢唯一 Sf/Vf，因此能明显减弱假性的型别替代。
+        dPany = (
+            persistent_any_inflow
+            - cancer_flow_total
+            - (self.gamma_P + self.dcq_f) * Pany
+        )
+        dPany[1:] += Pany[:-1] * self.c_f_
+
+        # 这里改为：
+        # 共享真实人口分母 + 共享 persistent-risk pool + 分亚型组边际风险通道。
+        # 各组不再机械性地争抢唯一 Sf/Vf，同时癌症事件也不再按各组直接简单求和。
         dSf = (
             self.phi * Rf
             - (alpha_f_from_s + psi[None, :] + self.dcq_f[None, :]) * Sf
@@ -283,16 +362,16 @@ class AgeSexSubtypeGroupedHPVModel(BaseHPVTransmissionModel):
             * If
         )
         dPf = (
-            self.beta_I * self.persistence_multipliers[:, None] * If
+            raw_persistent_inflow
             - (
-                self.beta_P * self.cancer_progression_multipliers[:, None]
-                + self.gamma_P
+                self.gamma_P
                 + self.dcq_f[None, :]
             )
             * Pf
+            - cancer_flow_by_group
         )
         dLC = (
-            self.beta_P * self.cancer_progression_multipliers[:, None] * Pf
+            cancer_flow_by_group
             - (
                 self.beta_LC * self.cancer_progression_multipliers[:, None]
                 + self.gamma_LC
@@ -352,7 +431,7 @@ class AgeSexSubtypeGroupedHPVModel(BaseHPVTransmissionModel):
         dPm[:, 1:] += Pm[:, :-1] * self.c_m_[None, :]
         dRm[:, 1:] += Rm[:, :-1] * self.c_m_[None, :]
 
-        derivatives = [dNf, dNm]
+        derivatives = [dNf, dNm, dPany]
         for block in (dSf, dVf, dIf, dPf, dLC, dRC, dDC, dRf):
             derivatives.extend(list(block))
         for block in (dSm, dIm, dPm, dRm):
@@ -365,8 +444,8 @@ class AgeSexSubtypeGroupedHPVModel(BaseHPVTransmissionModel):
             blocks = (
                 self.phi * Rf,
                 alpha_f_from_s * Sf + alpha_vaccinated * Vf,
-                self.beta_I * self.persistence_multipliers[:, None] * If,
-                self.beta_P * self.cancer_progression_multipliers[:, None] * Pf,
+                raw_persistent_inflow,
+                cancer_flow_by_group,
                 self.beta_LC * self.cancer_progression_multipliers[:, None] * LC,
                 self.beta_RC * self.cancer_progression_multipliers[:, None] * RC,
                 self.dL[None, :] * LC,
@@ -404,10 +483,9 @@ class AgeSexSubtypeGroupedHPVModel(BaseHPVTransmissionModel):
         return y[:, self._state_index["Nm"]]
 
     def group_incidence_matrix(self, y: np.ndarray) -> dict[str, np.ndarray]:
+        flow = self._cancer_flow_by_group_timeseries(y)
         return {
-            group_name: self.beta_P
-            * self.cancer_progression_multipliers[index]
-            * y[:, self._state_index[f"Pf__{group_name}"]]
+            group_name: flow[:, index]
             for index, group_name in enumerate(self.group_names)
         }
 
