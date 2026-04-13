@@ -1,7 +1,7 @@
 {
     "objective_mode": "multi_objective",
     "seed": 1234,
-    "n_trials": 1000,
+    "n_trials": 2000,
     "n_jobs": 10,
     "incidence_threshold": 4e-05,
     "strategy": "conti_one_cover",
