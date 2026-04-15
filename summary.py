@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -10,8 +11,12 @@ import pandas as pd
 from openpyxl import load_workbook
 
 from hpv_tdm import (
+    AgeSexAggregateHPVModel,
+    AgeSexSubtypeGroupedHPVModel,
     AggregateModelConfig,
+    EvaluationConfig,
     EvaluationResult,
+    Evaluator,
     SearchResult,
     SubtypeGroupedModelConfig,
 )
@@ -19,6 +24,83 @@ from hpv_tdm.result._plot import (
     PRODUCT_COLORS,
     apply_nature_style,
     apply_scientific_format,
+)
+
+USD_TO_RMB_2019 = 6.90
+
+
+@dataclass(frozen=True)
+class SensitivityParameter:
+    runtime_key: str
+    table_label: str
+    plot_label: str
+    change_display: str
+    value_unit: str
+
+
+SENSITIVITY_PARAMETERS: tuple[SensitivityParameter, ...] = (
+    SensitivityParameter(
+        runtime_key="epsilon_f",
+        table_label=(
+            "The probability that women are infected when they come into contact "
+            "with HPV partners"
+        ),
+        plot_label="Female infection\nprob.",
+        change_display="0.05",
+        value_unit="plain",
+    ),
+    SensitivityParameter(
+        runtime_key="epsilon_m",
+        table_label="The probability that a man will be infected by an HPV partner",
+        plot_label="Male infection\nprob.",
+        change_display="0.05",
+        value_unit="plain",
+    ),
+    SensitivityParameter(
+        runtime_key="discount_rate",
+        table_label="Bank rate",
+        plot_label="Bank rate",
+        change_display="0.02",
+        value_unit="plain",
+    ),
+    SensitivityParameter(
+        runtime_key="dose_cost",
+        table_label="Per capita cost of vaccine procurement",
+        plot_label="Vaccine cost",
+        change_display="0.2",
+        value_unit="rmb",
+    ),
+    SensitivityParameter(
+        runtime_key="dose_cost",
+        table_label=(
+            "Per capita transportation and management costs and per capita "
+            "service costs"
+        ),
+        plot_label="Service cost",
+        change_display="0.2",
+        value_unit="rmb",
+    ),
+    SensitivityParameter(
+        runtime_key="cost_per_cecx",
+        table_label="Cost of cervical cancer treatment (lifetime)",
+        plot_label="CC treatment\ncost",
+        change_display="0.2",
+        value_unit="rmb",
+    ),
+    SensitivityParameter(
+        runtime_key="daly_fatal",
+        table_label="DALYs for cancer diagnosis",
+        plot_label="Diagnosis\nDALY",
+        change_display="0.1",
+        value_unit="plain",
+    ),
+    SensitivityParameter(
+        runtime_key="daly_fatal",
+        table_label="DALYs for advanced cancer",
+        plot_label="Advanced\nDALY",
+        change_display="0.1",
+        value_unit="plain",
+    ),
 )
 
 
@@ -43,6 +125,26 @@ def _parse_args() -> argparse.Namespace:
         help="Directory used to store the generated summary files.",
     )
 
+    sensitivity_parser = subparsers.add_parser(
+        "sensitivity",
+        help="Compute and persist ICUR one-way sensitivity analysis payloads.",
+    )
+    sensitivity_parser.add_argument(
+        "--results-glob",
+        default="search-*y",
+        help="Glob pattern under results/ used to discover scenario directories.",
+    )
+    sensitivity_parser.add_argument(
+        "--results-root",
+        default="results",
+        help="Root directory containing search result folders.",
+    )
+    sensitivity_parser.add_argument(
+        "--output-dir",
+        default="summary",
+        help="Directory used to store the generated sensitivity payload files.",
+    )
+
     for command_name, help_text in (
         (
             "tab1",
@@ -57,6 +159,14 @@ def _parse_args() -> argparse.Namespace:
             "figs2",
             "Generate Supplementary Figure s2 by combining search-history "
             "panels across scenarios.",
+        ),
+        (
+            "tabs3",
+            "Generate Supplementary Table s3 with ICUR one-way sensitivity analysis.",
+        ),
+        (
+            "figs3",
+            "Generate Supplementary Figure s3 with ICUR tornado plots.",
         ),
     ):
         figure_parser = subparsers.add_parser(command_name, help=help_text)
@@ -75,6 +185,15 @@ def _parse_args() -> argparse.Namespace:
             default="summary",
             help="Directory used to store the generated summary files.",
         )
+        if command_name in {"tabs3", "figs3"}:
+            figure_parser.add_argument(
+                "--sensitivity-path",
+                default=None,
+                help=(
+                    "Path to a precomputed sensitivity payload JSON file. "
+                    "Defaults to <output-dir>/sensitivity_s3.json."
+                ),
+            )
 
     return parser.parse_args()
 
@@ -134,6 +253,21 @@ def _load_model_config(path: Path) -> AggregateModelConfig | SubtypeGroupedModel
     if model_kind == "subtype_grouped":
         return SubtypeGroupedModelConfig.from_json_dict(payload)
     raise ValueError(f"unsupported model kind: {model_kind}")
+
+
+def _load_evaluation_config(path: Path) -> EvaluationConfig:
+    return EvaluationConfig.from_json_file(path)
+
+
+def _build_model(
+    config: AggregateModelConfig | SubtypeGroupedModelConfig,
+) -> AgeSexAggregateHPVModel | AgeSexSubtypeGroupedHPVModel:
+    if isinstance(config, AggregateModelConfig) and not isinstance(
+        config,
+        SubtypeGroupedModelConfig,
+    ):
+        return AgeSexAggregateHPVModel(config)
+    return AgeSexSubtypeGroupedHPVModel(config)
 
 
 def _format_table_value(value: float) -> str:
@@ -263,6 +397,396 @@ def _discover_search_dirs(results_root: Path, results_glob: str) -> list[Path]:
     return search_dirs
 
 
+def _validate_sensitivity_dir(search_dir: Path) -> None:
+    required = (
+        "best_model_config.json",
+        "evaluation_config.json",
+        "best_trial.json",
+    )
+    missing = [name for name in required if not (search_dir / name).exists()]
+    if missing:
+        raise ValueError(
+            f"search result directory {search_dir} is missing required files: "
+            f"{', '.join(missing)}"
+        )
+
+
+def _build_reference_config(
+    model_config: AggregateModelConfig | SubtypeGroupedModelConfig,
+) -> AggregateModelConfig | SubtypeGroupedModelConfig:
+    return model_config.with_vaccination(
+        product_id=None,
+        coverage_by_age=[0.0] * model_config.nages,
+    )
+
+
+def _replace_transmission_value(
+    model_config: AggregateModelConfig | SubtypeGroupedModelConfig,
+    key: str,
+    value: float,
+) -> AggregateModelConfig | SubtypeGroupedModelConfig:
+    transmission = model_config.transmission.model_copy(update={key: value})
+    return model_config.model_copy(update={"transmission": transmission})
+
+
+def _replace_product_dose_cost(
+    model_config: AggregateModelConfig | SubtypeGroupedModelConfig,
+    dose_cost: float,
+) -> AggregateModelConfig | SubtypeGroupedModelConfig:
+    product_id = model_config.resolved_product_id()
+    product = model_config.vaccine_catalog.get_product(product_id)
+    products = dict(model_config.vaccine_catalog.products)
+    products[product_id] = product.model_copy(update={"dose_cost": dose_cost})
+    vaccine_catalog = model_config.vaccine_catalog.model_copy(
+        update={"products": products}
+    )
+    return model_config.model_copy(update={"vaccine_catalog": vaccine_catalog})
+
+
+def _replace_evaluation_value(
+    evaluation_config: EvaluationConfig,
+    key: str,
+    value: float,
+) -> EvaluationConfig:
+    return evaluation_config.model_copy(update={key: value})
+
+
+def _format_numeric(value: float, decimals: int = 2) -> str:
+    return f"{value:.{decimals}f}"
+
+
+def _simulate_and_evaluate(
+    model_config: AggregateModelConfig | SubtypeGroupedModelConfig,
+    evaluation_config: EvaluationConfig,
+) -> float:
+    vaccinated_model = _build_model(model_config)
+    vaccinated_simulation = vaccinated_model.simulate()
+    reference_model = _build_model(_build_reference_config(model_config))
+    reference_simulation = reference_model.simulate()
+    evaluator = Evaluator(evaluation_config)
+    evaluation = evaluator.evaluate(vaccinated_simulation, reference_simulation)
+    return float(evaluation.icur[-1])
+
+
+def _evaluate_from_existing_simulations(
+    vaccinated_simulation,
+    reference_simulation,
+    evaluation_config: EvaluationConfig,
+) -> float:
+    evaluator = Evaluator(evaluation_config)
+    evaluation = evaluator.evaluate(vaccinated_simulation, reference_simulation)
+    return float(evaluation.icur[-1])
+
+
+def _parameter_display_values(
+    parameter: SensitivityParameter,
+    model_config: AggregateModelConfig | SubtypeGroupedModelConfig,
+    evaluation_config: EvaluationConfig,
+) -> tuple[float, float, float]:
+    if parameter.runtime_key == "epsilon_f":
+        original = float(model_config.transmission.epsilon_f)
+        return original, original * 0.95, original * 1.05
+    if parameter.runtime_key == "epsilon_m":
+        original = float(model_config.transmission.epsilon_m)
+        return original, original * 0.95, original * 1.05
+    if parameter.runtime_key == "discount_rate":
+        original = float(evaluation_config.discount_rate)
+        return original, 0.01, 0.05
+    if parameter.runtime_key == "dose_cost":
+        original = float(
+            model_config.vaccine_catalog.get_product(
+                model_config.resolved_product_id()
+            ).dose_cost
+        )
+        return original, original * 0.8, original * 1.2
+    if parameter.runtime_key == "cost_per_cecx":
+        original = float(evaluation_config.cost_per_cecx)
+        return original, original * 0.8, original * 1.2
+    if parameter.runtime_key == "daly_fatal":
+        original = float(evaluation_config.daly_fatal)
+        return original, original * 0.9, original * 1.1
+    raise ValueError(f"unsupported sensitivity parameter: {parameter.runtime_key}")
+
+
+def _format_parameter_value(value: float, unit: str) -> str:
+    display = value * USD_TO_RMB_2019 if unit == "rmb" else value
+    if unit == "plain" and abs(display) < 1:
+        return f"{display:.4f}".rstrip("0").rstrip(".")
+    return _format_numeric(display, decimals=2)
+
+
+def _compute_sensitivity_payloads(
+    results_root: Path,
+    results_glob: str,
+) -> tuple[list[tuple[int, Path]], list[dict[str, object]]]:
+    search_dirs = _discover_search_dirs(results_root, results_glob)
+    scenarios = [
+        (_scenario_years_from_name(directory), directory)
+        for directory in search_dirs
+    ]
+    rows: list[dict[str, object]] = []
+    for years, search_dir in scenarios:
+        _validate_sensitivity_dir(search_dir)
+        model_config = _load_model_config(search_dir / "best_model_config.json")
+        evaluation_config = _load_evaluation_config(
+            search_dir / "evaluation_config.json"
+        )
+
+        vaccinated_model = _build_model(model_config)
+        vaccinated_simulation = vaccinated_model.simulate()
+        reference_model = _build_model(_build_reference_config(model_config))
+        reference_simulation = reference_model.simulate()
+        baseline_icur = _evaluate_from_existing_simulations(
+            vaccinated_simulation,
+            reference_simulation,
+            evaluation_config,
+        )
+
+        runtime_results: dict[str, dict[str, float]] = {
+            "baseline": {"original": baseline_icur}
+        }
+
+        epsilon_f = float(model_config.transmission.epsilon_f)
+        epsilon_f_results = {}
+        for bound_name, bound_value in {
+            "lower": epsilon_f * 0.95,
+            "upper": epsilon_f * 1.05,
+        }.items():
+            perturbed_model_config = _replace_transmission_value(
+                model_config,
+                "epsilon_f",
+                bound_value,
+            )
+            epsilon_f_results[bound_name] = _simulate_and_evaluate(
+                perturbed_model_config,
+                evaluation_config,
+            )
+        runtime_results["epsilon_f"] = epsilon_f_results
+
+        epsilon_m = float(model_config.transmission.epsilon_m)
+        epsilon_m_results = {}
+        for bound_name, bound_value in {
+            "lower": epsilon_m * 0.95,
+            "upper": epsilon_m * 1.05,
+        }.items():
+            perturbed_model_config = _replace_transmission_value(
+                model_config,
+                "epsilon_m",
+                bound_value,
+            )
+            epsilon_m_results[bound_name] = _simulate_and_evaluate(
+                perturbed_model_config,
+                evaluation_config,
+            )
+        runtime_results["epsilon_m"] = epsilon_m_results
+
+        dose_cost = float(
+            model_config.vaccine_catalog.get_product(model_config.resolved_product_id()).dose_cost
+        )
+        dose_cost_results = {}
+        for bound_name, bound_value in {
+            "lower": dose_cost * 0.8,
+            "upper": dose_cost * 1.2,
+        }.items():
+            perturbed_model_config = _replace_product_dose_cost(
+                model_config,
+                bound_value,
+            )
+            vaccinated_model_perturbed = _build_model(perturbed_model_config)
+            vaccinated_simulation_perturbed = vaccinated_model_perturbed.simulate()
+            dose_cost_results[bound_name] = _evaluate_from_existing_simulations(
+                vaccinated_simulation_perturbed,
+                reference_simulation,
+                evaluation_config,
+            )
+        runtime_results["dose_cost"] = dose_cost_results
+
+        discount_results = {}
+        for bound_name, bound_value in {"lower": 0.01, "upper": 0.05}.items():
+            perturbed_evaluation_config = _replace_evaluation_value(
+                evaluation_config,
+                "discount_rate",
+                bound_value,
+            )
+            discount_results[bound_name] = _evaluate_from_existing_simulations(
+                vaccinated_simulation,
+                reference_simulation,
+                perturbed_evaluation_config,
+            )
+        runtime_results["discount_rate"] = discount_results
+
+        cost_per_cecx = float(evaluation_config.cost_per_cecx)
+        cost_results = {}
+        for bound_name, bound_value in {
+            "lower": cost_per_cecx * 0.8,
+            "upper": cost_per_cecx * 1.2,
+        }.items():
+            perturbed_evaluation_config = _replace_evaluation_value(
+                evaluation_config,
+                "cost_per_cecx",
+                bound_value,
+            )
+            cost_results[bound_name] = _evaluate_from_existing_simulations(
+                vaccinated_simulation,
+                reference_simulation,
+                perturbed_evaluation_config,
+            )
+        runtime_results["cost_per_cecx"] = cost_results
+
+        daly_fatal = float(evaluation_config.daly_fatal)
+        daly_results = {}
+        for bound_name, bound_value in {
+            "lower": daly_fatal * 0.9,
+            "upper": daly_fatal * 1.1,
+        }.items():
+            perturbed_evaluation_config = _replace_evaluation_value(
+                evaluation_config,
+                "daly_fatal",
+                bound_value,
+            )
+            daly_results[bound_name] = _evaluate_from_existing_simulations(
+                vaccinated_simulation,
+                reference_simulation,
+                perturbed_evaluation_config,
+            )
+        runtime_results["daly_fatal"] = daly_results
+
+        baseline_icur_rmb = baseline_icur * USD_TO_RMB_2019
+        for parameter in SENSITIVITY_PARAMETERS:
+            original_value, lower_value, upper_value = _parameter_display_values(
+                parameter,
+                model_config,
+                evaluation_config,
+            )
+            lower_icur_rmb = (
+                runtime_results[parameter.runtime_key]["lower"] * USD_TO_RMB_2019
+            )
+            upper_icur_rmb = (
+                runtime_results[parameter.runtime_key]["upper"] * USD_TO_RMB_2019
+            )
+            rows.append(
+                {
+                    "scenario_years": years,
+                    "parameter": parameter.table_label,
+                    "plot_label": parameter.plot_label,
+                    "change_display": parameter.change_display,
+                    "original_value_display": _format_parameter_value(
+                        original_value,
+                        parameter.value_unit,
+                    ),
+                    "lower_value_display": _format_parameter_value(
+                        lower_value,
+                        parameter.value_unit,
+                    ),
+                    "upper_value_display": _format_parameter_value(
+                        upper_value,
+                        parameter.value_unit,
+                    ),
+                    "baseline_icur_rmb": baseline_icur_rmb,
+                    "lower_icur_rmb": lower_icur_rmb,
+                    "upper_icur_rmb": upper_icur_rmb,
+                    "absolute_change_rmb": max(
+                        abs(lower_icur_rmb - baseline_icur_rmb),
+                        abs(upper_icur_rmb - baseline_icur_rmb),
+                    ),
+                    "lower_delta_rmb": lower_icur_rmb - baseline_icur_rmb,
+                    "upper_delta_rmb": upper_icur_rmb - baseline_icur_rmb,
+                }
+            )
+    return scenarios, rows
+
+
+def _sensitivity_payload_path(path: str | Path | None, output_dir: Path) -> Path:
+    if path is not None:
+        return Path(path)
+    return output_dir / "sensitivity_s3.json"
+
+
+def _write_sensitivity_outputs(
+    scenarios: list[tuple[int, Path]],
+    rows: list[dict[str, object]],
+    output_dir: Path,
+    *,
+    payload_path: Path,
+) -> tuple[Path, Path]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "scenarios": [
+            {"years": years, "directory": str(directory)}
+            for years, directory in scenarios
+        ],
+        "rows": rows,
+        "usd_to_rmb_2019": USD_TO_RMB_2019,
+    }
+    payload_path.parent.mkdir(parents=True, exist_ok=True)
+    payload_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    longform_path = output_dir / "sensitivity_s3.csv"
+    pd.DataFrame.from_records(rows).to_csv(longform_path, index=False)
+    return payload_path, longform_path
+
+
+def _load_sensitivity_payload(
+    path: Path,
+) -> tuple[list[tuple[int, Path]], list[dict[str, object]]]:
+    if not path.exists():
+        raise ValueError(
+            f"sensitivity payload not found: {path}. "
+            "Run `uv run summary.py sensitivity` first."
+        )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    scenarios = [
+        (int(item["years"]), Path(item["directory"])) for item in payload["scenarios"]
+    ]
+    rows = list(payload["rows"])
+    return scenarios, rows
+
+
+def _build_tabs3_dataframe(
+    scenarios: list[tuple[int, Path]],
+    rows: list[dict[str, object]],
+) -> pd.DataFrame:
+    records: list[dict[str, object]] = []
+    for parameter in SENSITIVITY_PARAMETERS:
+        matching_first = next(
+            row
+            for row in rows
+            if row["scenario_years"] == scenarios[0][0]
+            and row["parameter"] == parameter.table_label
+        )
+        record: dict[str, object] = {
+            "Parameter": parameter.table_label,
+            "The rate of change": matching_first["change_display"],
+            "Original value": matching_first["original_value_display"],
+            "Lower limit value": matching_first["lower_value_display"],
+            "Upper limit value": matching_first["upper_value_display"],
+        }
+        for years, _ in scenarios:
+            matching = next(
+                row
+                for row in rows
+                if row["scenario_years"] == years
+                and row["parameter"] == parameter.table_label
+            )
+            prefix = f"{years}y"
+            record[f"{prefix} Original ICUR"] = _format_numeric(
+                matching["baseline_icur_rmb"]
+            )
+            record[f"{prefix} Lower limit ICUR"] = _format_numeric(
+                matching["lower_icur_rmb"]
+            )
+            record[f"{prefix} Upper limit ICUR"] = _format_numeric(
+                matching["upper_icur_rmb"]
+            )
+            record[f"{prefix} Absolute change in ICUR"] = _format_numeric(
+                matching["absolute_change_rmb"]
+            )
+        records.append(record)
+    return pd.DataFrame.from_records(records)
+
+
 def _load_search_results(
     results_root: Path, results_glob: str
 ) -> list[tuple[int, Path, SearchResult]]:
@@ -293,7 +817,6 @@ def _build_figs1(
     )
     axes_flat = axes.flatten()
     x_values: list[float] = []
-    y_values: list[float] = []
     for _, _, result in search_results:
         completed_trials = [
             trial for trial in result.study.trials if trial.state.name == "COMPLETE"
@@ -301,11 +824,8 @@ def _build_figs1(
         x_values.extend(
             result._trial_incidence(trial) * 1e5 for trial in completed_trials
         )
-        y_values.extend(result._trial_icur(trial) for trial in completed_trials)
     x_min, x_max = min(x_values), max(x_values)
-    y_min, y_max = min(y_values), max(y_values)
     x_pad = (x_max - x_min) * 0.05 if x_max > x_min else max(x_max * 0.05, 0.1)
-    y_pad = (y_max - y_min) * 0.08 if y_max > y_min else max(y_max * 0.05, 1.0)
 
     for index, ((years, _, result), axis) in enumerate(zip(search_results, axes_flat)):
         completed_trials = [
@@ -515,6 +1035,82 @@ def _build_figs2(
     return output_path
 
 
+def _build_figs3(
+    output_dir: Path,
+    scenarios: list[tuple[int, Path]],
+    rows: list[dict[str, object]],
+) -> Path:
+    fig, axes = plt.subplots(3, 2, figsize=(13.2, 10.6), sharex=False, sharey=False)
+    axes_flat = axes.flatten()
+    lower_color = "#2C7FB8"
+    upper_color = "#D1495B"
+
+    for index, ((years, _), axis) in enumerate(zip(scenarios, axes_flat)):
+        scenario_rows = [row for row in rows if row["scenario_years"] == years]
+        scenario_rows = sorted(
+            scenario_rows,
+            key=lambda row: float(row["absolute_change_rmb"]),
+            reverse=True,
+        )
+        y_positions = list(range(len(scenario_rows)))
+        axis.barh(
+            [y - 0.16 for y in y_positions],
+            [row["lower_delta_rmb"] for row in scenario_rows],
+            height=0.28,
+            color=lower_color,
+            alpha=0.85,
+        )
+        axis.barh(
+            [y + 0.16 for y in y_positions],
+            [row["upper_delta_rmb"] for row in scenario_rows],
+            height=0.28,
+            color=upper_color,
+            alpha=0.85,
+        )
+        axis.axvline(0, color="#202020", linewidth=0.9, linestyle="--", alpha=0.9)
+        axis.set_yticks(y_positions)
+        axis.set_yticklabels(
+            [row["plot_label"] for row in scenario_rows],
+            fontsize=8.4,
+            linespacing=1.05,
+        )
+        axis.tick_params(axis="y", pad=3)
+        axis.invert_yaxis()
+        axis.set_title(f"{years}-year horizon", fontsize=10, pad=4)
+        axis.text(
+            0.02,
+            0.98,
+            _subplot_panel_label(index),
+            transform=axis.transAxes,
+            va="top",
+            ha="left",
+            fontsize=10,
+            fontweight="bold",
+        )
+        apply_scientific_format(axis, x=True, y=False)
+
+    fig.supxlabel("ΔICUR (RMB / DALY)", fontsize=11)
+    handles = [
+        plt.Line2D([0], [0], color=lower_color, linewidth=6, label="Lower limit"),
+        plt.Line2D([0], [0], color=upper_color, linewidth=6, label="Upper limit"),
+    ]
+    fig.legend(
+        handles=handles,
+        loc="upper center",
+        ncol=2,
+        frameon=False,
+        bbox_to_anchor=(0.5, 0.995),
+        fontsize=8.5,
+    )
+    apply_nature_style(fig, axes_flat)
+    fig.tight_layout(rect=(0.09, 0, 1, 0.96))
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / "figure_s3.png"
+    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    return output_path
+
+
 def _run_tab1(args: argparse.Namespace) -> None:
     results_root = Path(args.results_root)
     output_dir = Path(args.output_dir)
@@ -551,6 +1147,48 @@ def _run_figs2(args: argparse.Namespace) -> None:
     print(f"Wrote {output_path}")
 
 
+def _run_sensitivity(args: argparse.Namespace) -> None:
+    output_dir = Path(args.output_dir)
+    scenarios, rows = _compute_sensitivity_payloads(
+        Path(args.results_root),
+        args.results_glob,
+    )
+    payload_path = _sensitivity_payload_path(None, output_dir)
+    json_path, csv_path = _write_sensitivity_outputs(
+        scenarios,
+        rows,
+        output_dir,
+        payload_path=payload_path,
+    )
+    print(f"Wrote {json_path}")
+    print(f"Wrote {csv_path}")
+
+
+def _run_tabs3(args: argparse.Namespace) -> None:
+    output_dir = Path(args.output_dir)
+    payload_path = _sensitivity_payload_path(args.sensitivity_path, output_dir)
+    scenarios, rows = _load_sensitivity_payload(payload_path)
+    dataframe = _build_tabs3_dataframe(scenarios, rows)
+    excel_path, csv_path, markdown_path = _write_table_outputs(
+        dataframe, output_dir, "table_s3"
+    )
+    print(f"Wrote {excel_path}")
+    print(f"Wrote {csv_path}")
+    print(f"Wrote {markdown_path}")
+
+
+def _run_figs3(args: argparse.Namespace) -> None:
+    output_dir = Path(args.output_dir)
+    payload_path = _sensitivity_payload_path(args.sensitivity_path, output_dir)
+    scenarios, rows = _load_sensitivity_payload(payload_path)
+    output_path = _build_figs3(
+        output_dir,
+        scenarios,
+        rows,
+    )
+    print(f"Wrote {output_path}")
+
+
 def main() -> None:
     args = _parse_args()
     if args.command == "tab1":
@@ -564,6 +1202,15 @@ def main() -> None:
         return
     if args.command == "figs2":
         _run_figs2(args)
+        return
+    if args.command == "sensitivity":
+        _run_sensitivity(args)
+        return
+    if args.command == "tabs3":
+        _run_tabs3(args)
+        return
+    if args.command == "figs3":
+        _run_figs3(args)
         return
     raise ValueError(f"unsupported command: {args.command}")
 
