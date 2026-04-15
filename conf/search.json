@@ -1,13 +1,13 @@
 {
     "objective_mode": "multi_objective",
     "seed": 1234,
-    "n_trials": 2000,
+    "n_trials": 5000,
     "n_jobs": 10,
     "incidence_threshold": 4e-05,
     "strategy": "conti_one_cover",
     "n_vacc_ages": 2,
     "age_index_span": [
-        0,
+        2,
         11
     ],
     "study_name": "hpv_tdm",

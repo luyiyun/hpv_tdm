@@ -5,6 +5,9 @@
 *.ipynb
 *.png
 *.pdf
+*.docx
+*.doc
+
 
 others/
 results/
@@ -12,6 +15,7 @@ data/
 build/
 paper/src_/
 summary/
+scripts/
 .venv/
 .ruff_cache/
 .pytest_cache/

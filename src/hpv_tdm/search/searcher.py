@@ -69,10 +69,10 @@ class Searcher:
         age0, age1 = value
         return int(age0), int(age1)
 
-    def _candidate_product_ids(self, model: BaseHPVTransmissionModel) -> list[str]:
+    def _candidate_product_ids(self, base_config) -> list[str]:
         if self.config.product_ids is not None:
             return self.config.product_ids
-        return list(model.to_config().vaccine_catalog.products)
+        return list(base_config.vaccine_catalog.products)
 
     def _build_candidate_from_params(
         self,
@@ -103,12 +103,11 @@ class Searcher:
             coverage_by_age=coverage_by_age,
         )
 
-    def _suggest_candidate(self, trial: optuna.Trial, model: BaseHPVTransmissionModel):
-        base_config = model.to_config()
+    def _suggest_candidate(self, trial: optuna.Trial, base_config):
         params: dict[str, Any] = {
             "target_product_id": trial.suggest_categorical(
                 "target_product_id",
-                self._candidate_product_ids(model),
+                self._candidate_product_ids(base_config),
             )
         }
         if self.config.strategy == "one":
@@ -177,6 +176,7 @@ class Searcher:
         output_dir: str | Path | None = None,
     ) -> SearchResult:
         base_config = model.to_config()
+        model_cls = type(model)
         if self.config.age_index_span[1] > base_config.nages:
             raise ValueError("search age_index_span is out of bounds for the model")
 
@@ -184,8 +184,8 @@ class Searcher:
             product_id=None,
             coverage_by_age=[0.0] * base_config.nages,
         )
-        model.set_config(reference_config)
-        reference_simulation = model.simulate()
+        reference_model = model_cls(reference_config)
+        reference_simulation = reference_model.simulate()
         reference_evaluation = evaluator.evaluate(reference_simulation)
 
         sampler = optuna.samplers.TPESampler(
@@ -221,9 +221,9 @@ class Searcher:
             )
 
         def objective(trial: optuna.Trial) -> tuple[float, float] | float:
-            candidate_config = self._suggest_candidate(trial, model)
-            model.set_config(candidate_config)
-            simulation = model.simulate()
+            candidate_config = self._suggest_candidate(trial, base_config)
+            trial_model = model_cls(candidate_config)
+            simulation = trial_model.simulate()
             evaluation_result = evaluator.evaluate(simulation, reference_simulation)
             icur = float(evaluation_result.icur[-1])
             incidence = float(evaluation_result.incidence[-1])
@@ -271,11 +271,10 @@ class Searcher:
             best_model_config = self._build_candidate_from_params(
                 base_config, best_trial.params
             )
-            model.set_config(best_model_config)
-            best_simulation = model.simulate()
+            best_model = model_cls(best_model_config)
+            best_simulation = best_model.simulate()
             best_evaluation = evaluator.evaluate(best_simulation, reference_simulation)
 
-        model.set_config(base_config)
         return SearchResult(
             config=self.config,
             study=study,
