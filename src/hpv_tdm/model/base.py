@@ -330,11 +330,16 @@ class BaseHPVTransmissionModel(ODESystemModel):
     def vaccination_cost_per_age(
         self,
         dose_cost: float,
-        doses_under_15: int,
-        doses_over_15: int,
+        dose_schedules: list[Any],
     ) -> np.ndarray:
         lower_bounds = self.agebins[:-1]
-        doses = np.where(lower_bounds < 15, doses_under_15, doses_over_15)
+        doses = np.zeros(self.nages, dtype=float)
+        for rule in dose_schedules:
+            age_min = int(getattr(rule, "age_min"))
+            age_max = int(getattr(rule, "age_max"))
+            rule_doses = int(getattr(rule, "doses"))
+            rule_mask = (lower_bounds >= age_min) & (lower_bounds <= age_max)
+            doses[rule_mask] = float(rule_doses)
         return doses.astype(float) * dose_cost
 
     def _resolve_callable_or_array(self, value: Any, t: float) -> np.ndarray:

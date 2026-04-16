@@ -11,6 +11,11 @@ PRODUCT_COLORS = {
     "bivalent": "#2C7FB8",
     "quadrivalent": "#F28E2B",
     "nonavalent": "#D1495B",
+    "domestic_bivalent": "#2C7FB8",
+    "imported_bivalent": "#76B7E5",
+    "imported_quadrivalent": "#F28E2B",
+    "domestic_nonavalent": "#59A14F",
+    "imported_nonavalent": "#D1495B",
 }
 
 

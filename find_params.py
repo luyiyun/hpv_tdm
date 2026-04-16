@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import sqlite3
 from pathlib import Path
 from typing import Literal
 
@@ -207,6 +208,15 @@ def _build_sampler(params_config: FindParamsConfig) -> optuna.samplers.BaseSampl
             "optimizer='cmaes' requires the 'cmaes' package to be installed"
         )
     return optuna.samplers.CmaEsSampler(seed=params_config.seed)
+
+
+def _prepare_sqlite_storage(storage_path: Path) -> None:
+    storage_path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(storage_path) as connection:
+        connection.execute("PRAGMA journal_mode=WAL;")
+        connection.execute("PRAGMA synchronous=NORMAL;")
+        connection.execute("PRAGMA busy_timeout=60000;")
+        connection.commit()
 
 
 def _candidate_config(
@@ -454,9 +464,14 @@ def main() -> None:
 
     sampler = _build_sampler(params_config)
     storage_path = output_dir / params_config.storage_filename
+    _prepare_sqlite_storage(storage_path)
+    storage = optuna.storages.RDBStorage(
+        url=f"sqlite:///{storage_path}",
+        engine_kwargs={"connect_args": {"timeout": 60}},
+    )
     study = optuna.create_study(
         study_name=params_config.study_name,
-        storage=f"sqlite:///{storage_path}",
+        storage=storage,
         load_if_exists=True,
         sampler=sampler,
         direction="minimize",
@@ -522,13 +537,6 @@ def main() -> None:
             + params_config.objective_weights.cancer_share * cancer_error
             + params_config.objective_weights.incidence_trend * trend_error
         )
-        trial.set_user_attr("incidence_per_100k", incidence_per_100k)
-        trial.set_user_attr("infection_share_by_group", infection_share)
-        trial.set_user_attr("cancer_share_by_group", cancer_share)
-        trial.set_user_attr(
-            "incidence_slope_per_100k_per_year",
-            incidence_trend,
-        )
         return float(objective_value)
 
     study.optimize(
@@ -577,7 +585,12 @@ def main() -> None:
                 "number": best_trial.number,
                 "value": best_trial.value,
                 "params": best_trial.params,
-                "user_attrs": best_trial.user_attrs,
+                "user_attrs": {
+                    "incidence_per_100k": incidence_per_100k,
+                    "infection_share_by_group": infection_share,
+                    "cancer_share_by_group": cancer_share,
+                    "incidence_slope_per_100k_per_year": incidence_trend,
+                },
             },
             handle,
             ensure_ascii=False,

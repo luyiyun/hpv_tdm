@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import warnings
 from typing import Literal, Self
 
+import numpy as np
 from pydantic import Field, model_validator
 
 from .base import ConfigBase
@@ -410,6 +412,27 @@ class VaccinationProgramConfig(ConfigBase):
     )
 
 
+class VaccineDoseScheduleConfig(ConfigBase):
+    doses: int = Field(
+        ge=1,
+        description="该年龄范围内推荐接种剂次数。",
+    )
+    age_min: int = Field(
+        ge=0,
+        description="该剂次规则适用的最小年龄（含）。",
+    )
+    age_max: int = Field(
+        ge=0,
+        description="该剂次规则适用的最大年龄（含）。",
+    )
+
+    @model_validator(mode="after")
+    def validate_age_range(self) -> Self:
+        if self.age_max < self.age_min:
+            raise ValueError("dose schedule age_max must be >= age_min")
+        return self
+
+
 class VaccineProductConfig(ConfigBase):
     display_name: str = Field(description="疫苗产品展示名称。")
     aggregate_efficacy: float = Field(
@@ -421,15 +444,12 @@ class VaccineProductConfig(ConfigBase):
         ge=0,
         description="单剂疫苗成本。",
     )
-    doses_under_15: int = Field(
-        default=2,
-        ge=1,
-        description="15 岁以下推荐接种剂次数。",
-    )
-    doses_over_15: int = Field(
-        default=3,
-        ge=1,
-        description="15 岁及以上推荐接种剂次数。",
+    dose_schedules: list[VaccineDoseScheduleConfig] = Field(
+        default_factory=lambda: [
+            VaccineDoseScheduleConfig(doses=2, age_min=9, age_max=14),
+            VaccineDoseScheduleConfig(doses=3, age_min=15, age_max=45),
+        ],
+        description="按年龄范围定义的接种剂次规则列表。",
     )
     group_protection: dict[str, float] = Field(
         default_factory=dict,
@@ -439,25 +459,69 @@ class VaccineProductConfig(ConfigBase):
         ),
     )
 
+    @model_validator(mode="after")
+    def validate_dose_schedules(self) -> Self:
+        if not self.dose_schedules:
+            raise ValueError("dose_schedules must contain at least one rule")
+        sorted_rules = sorted(self.dose_schedules, key=lambda item: item.age_min)
+        for previous, current in zip(sorted_rules[:-1], sorted_rules[1:]):
+            if current.age_min <= previous.age_max:
+                raise ValueError("dose_schedules age ranges must not overlap")
+        return self
+
 
 def _default_vaccine_catalog() -> dict[str, VaccineProductConfig]:
     return {
-        "bivalent": VaccineProductConfig(
-            display_name="Bivalent HPV vaccine",
+        "domestic_bivalent": VaccineProductConfig(
+            display_name="Domestic bivalent HPV vaccine",
             aggregate_efficacy=0.691,
-            dose_cost=153.2,
+            dose_cost=986.99 / 3,
+            dose_schedules=[
+                VaccineDoseScheduleConfig(doses=2, age_min=9, age_max=14),
+                VaccineDoseScheduleConfig(doses=3, age_min=15, age_max=45),
+            ],
             group_protection={"hr_16_18": 1.0},
         ),
-        "quadrivalent": VaccineProductConfig(
-            display_name="Quadrivalent HPV vaccine",
+        "imported_bivalent": VaccineProductConfig(
+            display_name="Imported bivalent HPV vaccine",
             aggregate_efficacy=0.691,
-            dose_cost=262.38,
+            dose_cost=1739.97 / 3,
+            dose_schedules=[
+                VaccineDoseScheduleConfig(doses=2, age_min=9, age_max=14),
+                VaccineDoseScheduleConfig(doses=3, age_min=15, age_max=45),
+            ],
             group_protection={"hr_16_18": 1.0},
         ),
-        "nonavalent": VaccineProductConfig(
-            display_name="Nonavalent HPV vaccine",
+        "imported_quadrivalent": VaccineProductConfig(
+            display_name="Imported quadrivalent HPV vaccine",
+            aggregate_efficacy=0.691,
+            dose_cost=2393.98 / 3,
+            dose_schedules=[
+                VaccineDoseScheduleConfig(doses=3, age_min=9, age_max=45),
+            ],
+            group_protection={"hr_16_18": 1.0},
+        ),
+        "domestic_nonavalent": VaccineProductConfig(
+            display_name="Domestic nonavalent HPV vaccine",
             aggregate_efficacy=0.921,
-            dose_cost=574.71,
+            dose_cost=499.0,
+            dose_schedules=[
+                VaccineDoseScheduleConfig(doses=2, age_min=9, age_max=17),
+                VaccineDoseScheduleConfig(doses=3, age_min=18, age_max=45),
+            ],
+            group_protection={
+                "hr_16_18": 1.0,
+                "hr_31_33_45_52_58": 1.0,
+            },
+        ),
+        "imported_nonavalent": VaccineProductConfig(
+            display_name="Imported nonavalent HPV vaccine",
+            aggregate_efficacy=0.921,
+            dose_cost=3894.01 / 3,
+            dose_schedules=[
+                VaccineDoseScheduleConfig(doses=2, age_min=9, age_max=14),
+                VaccineDoseScheduleConfig(doses=3, age_min=15, age_max=45),
+            ],
             group_protection={
                 "hr_16_18": 1.0,
                 "hr_31_33_45_52_58": 1.0,
@@ -468,7 +532,7 @@ def _default_vaccine_catalog() -> dict[str, VaccineProductConfig]:
 
 class VaccineCatalogConfig(ConfigBase):
     default_product_id: str = Field(
-        default="bivalent",
+        default="domestic_bivalent",
         description="未显式指定时默认采用的疫苗产品编号。",
     )
     products: dict[str, VaccineProductConfig] = Field(
@@ -587,7 +651,51 @@ class AggregateModelConfig(ConfigBase):
         if self.vaccination.coverage_by_age is not None:
             if len(self.vaccination.coverage_by_age) != nages:
                 raise ValueError("coverage_by_age length must match agebins")
+        self._warn_if_vaccination_outside_allowed_age()
         return self
+
+    def _warn_if_vaccination_outside_allowed_age(self) -> None:
+        coverage = self.resolved_coverage_by_age()
+        if not any(value > 0 for value in coverage):
+            return
+        product = self.vaccine_catalog.get_product(self.resolved_product_id())
+        lower_bounds = np.asarray(self.demography.agebins[:-1], dtype=float)
+        upper_bounds = np.asarray(self.demography.agebins[1:], dtype=float)
+        allowed = np.zeros(self.nages, dtype=bool)
+        for rule in product.dose_schedules:
+            allowed |= (lower_bounds >= rule.age_min) & (lower_bounds <= rule.age_max)
+
+        invalid_indices = [
+            index
+            for index, (is_allowed, value) in enumerate(zip(allowed, coverage))
+            if (not is_allowed) and value > 0
+        ]
+        if not invalid_indices:
+            return
+
+        age_labels = []
+        for index in invalid_indices:
+            lower = lower_bounds[index]
+            upper = upper_bounds[index]
+            lower_text = str(int(lower)) if float(lower).is_integer() else str(lower)
+            if upper == float("inf"):
+                age_labels.append(f"[{lower_text}, inf)")
+            else:
+                upper_text = (
+                    str(int(upper))
+                    if float(upper).is_integer()
+                    else str(upper)
+                )
+                age_labels.append(f"[{lower_text}, {upper_text})")
+
+        warnings.warn(
+            (
+                f"vaccination coverage is set for age groups outside the allowed "
+                f"dose_schedules of product {self.resolved_product_id()!r}: "
+                f"{', '.join(age_labels)}"
+            ),
+            stacklevel=2,
+        )
 
 
 class SubtypeGroupConfig(ConfigBase):

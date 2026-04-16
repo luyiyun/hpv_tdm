@@ -28,7 +28,6 @@ from hpv_tdm.result._plot import (
     apply_scientific_format,
 )
 
-USD_TO_RMB_2019 = 6.90
 BUDGET_BEGIN_YEAR = 2019
 BUDGET_UNIT_LABEL = "10,000 yuan"
 BUDGET_UNIT_DIVISOR = 10_000
@@ -377,6 +376,11 @@ def _product_label(product_id: str) -> str:
         "bivalent": "Bivalent vaccine",
         "quadrivalent": "Quadrivalent vaccine",
         "nonavalent": "Nonavalent vaccine",
+        "domestic_bivalent": "Domestic bivalent vaccine",
+        "imported_bivalent": "Imported bivalent vaccine",
+        "imported_quadrivalent": "Imported quadrivalent vaccine",
+        "domestic_nonavalent": "Domestic nonavalent vaccine",
+        "imported_nonavalent": "Imported nonavalent vaccine",
     }
     return mapping.get(product_id, product_id)
 
@@ -667,9 +671,7 @@ def _build_fig2_scenario(search_dir: Path) -> Fig2Scenario:
     incidence_reduction = np.clip(reference_incidence - vaccinated_incidence, 0, None)
     mortality_reduction = np.clip(reference_mortality - vaccinated_mortality, 0, None)
 
-    total_cost_diff_rmb = (
-        vaccinated_absolute.total_cost - reference_absolute.total_cost
-    ) * USD_TO_RMB_2019
+    total_cost_diff = vaccinated_absolute.total_cost - reference_absolute.total_cost
     avoid_cecx = np.asarray(evaluation.avoid_cecx.sum(axis=1), dtype=float)
     avoid_cecx_deaths = np.asarray(
         evaluation.avoid_cecx_deaths.sum(axis=1),
@@ -680,17 +682,14 @@ def _build_fig2_scenario(search_dir: Path) -> Fig2Scenario:
         np.asarray(vaccinated_absolute.cumulative_vaccinated.sum(axis=1), dtype=float)
         / 10_000
     )
-    vaccine_cost = (
-        np.asarray(vaccinated_absolute.cost_vacc, dtype=float)
-        * USD_TO_RMB_2019
-        / BUDGET_UNIT_DIVISOR
+    vaccine_cost = np.asarray(vaccinated_absolute.cost_vacc, dtype=float) / (
+        BUDGET_UNIT_DIVISOR
     )
     cost_saved = (
         (
             np.asarray(reference_absolute.cost_cecx, dtype=float)
             - np.asarray(vaccinated_absolute.cost_cecx, dtype=float)
         )
-        * USD_TO_RMB_2019
         / BUDGET_UNIT_DIVISOR
     )
     net_cost = vaccine_cost - cost_saved
@@ -711,9 +710,9 @@ def _build_fig2_scenario(search_dir: Path) -> Fig2Scenario:
         vaccine_cost=vaccine_cost,
         cost_saved=cost_saved,
         net_cost=net_cost,
-        ic_per_cecx=_safe_ratio(total_cost_diff_rmb, avoid_cecx),
-        ic_per_cecx_death=_safe_ratio(total_cost_diff_rmb, avoid_cecx_deaths),
-        icur=np.asarray(evaluation.icur, dtype=float) * USD_TO_RMB_2019,
+        ic_per_cecx=_safe_ratio(total_cost_diff, avoid_cecx),
+        ic_per_cecx_death=_safe_ratio(total_cost_diff, avoid_cecx_deaths),
+        icur=np.asarray(evaluation.icur, dtype=float),
     )
 
 
@@ -806,7 +805,7 @@ def _parameter_display_values(
 
 
 def _format_parameter_value(value: float, unit: str) -> str:
-    display = value * USD_TO_RMB_2019 if unit == "rmb" else value
+    display = value
     if unit == "plain" and abs(display) < 1:
         return f"{display:.4f}".rstrip("0").rstrip(".")
     return _format_numeric(display, decimals=2)
@@ -949,19 +948,15 @@ def _compute_sensitivity_payloads(
             )
         runtime_results["daly_fatal"] = daly_results
 
-        baseline_icur_rmb = baseline_icur * USD_TO_RMB_2019
+        baseline_icur_value = baseline_icur
         for parameter in SENSITIVITY_PARAMETERS:
             original_value, lower_value, upper_value = _parameter_display_values(
                 parameter,
                 model_config,
                 evaluation_config,
             )
-            lower_icur_rmb = (
-                runtime_results[parameter.runtime_key]["lower"] * USD_TO_RMB_2019
-            )
-            upper_icur_rmb = (
-                runtime_results[parameter.runtime_key]["upper"] * USD_TO_RMB_2019
-            )
+            lower_icur_value = runtime_results[parameter.runtime_key]["lower"]
+            upper_icur_value = runtime_results[parameter.runtime_key]["upper"]
             rows.append(
                 {
                     "scenario_years": years,
@@ -980,15 +975,15 @@ def _compute_sensitivity_payloads(
                         upper_value,
                         parameter.value_unit,
                     ),
-                    "baseline_icur_rmb": baseline_icur_rmb,
-                    "lower_icur_rmb": lower_icur_rmb,
-                    "upper_icur_rmb": upper_icur_rmb,
-                    "absolute_change_rmb": max(
-                        abs(lower_icur_rmb - baseline_icur_rmb),
-                        abs(upper_icur_rmb - baseline_icur_rmb),
+                    "baseline_icur": baseline_icur_value,
+                    "lower_icur": lower_icur_value,
+                    "upper_icur": upper_icur_value,
+                    "absolute_change": max(
+                        abs(lower_icur_value - baseline_icur_value),
+                        abs(upper_icur_value - baseline_icur_value),
                     ),
-                    "lower_delta_rmb": lower_icur_rmb - baseline_icur_rmb,
-                    "upper_delta_rmb": upper_icur_rmb - baseline_icur_rmb,
+                    "lower_delta": lower_icur_value - baseline_icur_value,
+                    "upper_delta": upper_icur_value - baseline_icur_value,
                 }
             )
     return scenarios, rows
@@ -1014,7 +1009,6 @@ def _write_sensitivity_outputs(
             for years, directory in scenarios
         ],
         "rows": rows,
-        "usd_to_rmb_2019": USD_TO_RMB_2019,
     }
     payload_path.parent.mkdir(parents=True, exist_ok=True)
     payload_path.write_text(
@@ -1108,7 +1102,6 @@ def _compute_budget_component_frame(
     cecx_treatment: float = 0.9,
     cecx_insured: tuple[float, float] = (0.7569, 0.2431),
     cecx_reimburse: tuple[float, float] = (0.479, 0.6211),
-    exchange_rate: float = USD_TO_RMB_2019,
     n_minor: int = 10,
 ) -> pd.DataFrame:
     model = sim_result.get_model()
@@ -1148,8 +1141,7 @@ def _compute_budget_component_frame(
         product = model.config.vaccine_catalog.get_product(product_id)
         vaccine_cost_per_age = model.vaccination_cost_per_age(
             dose_cost=product.dose_cost,
-            doses_under_15=product.doses_under_15,
-            doses_over_15=product.doses_over_15,
+            dose_schedules=product.dose_schedules,
         )
 
     cost_vacc_age = (
@@ -1175,9 +1167,9 @@ def _compute_budget_component_frame(
         "Year": years,
         "Vaccination count": annual_vaccinated.sum(axis=1),
         "Treated cervical cancer cases": annual_treated.sum(axis=1),
-        "Vaccination fund": cost_vacc_insurance * exchange_rate / BUDGET_UNIT_DIVISOR,
-        "Treatment fund": cost_cecx_insured * exchange_rate / BUDGET_UNIT_DIVISOR,
-        "Total fund": cost_insurance * exchange_rate / BUDGET_UNIT_DIVISOR,
+        "Vaccination fund": cost_vacc_insurance / BUDGET_UNIT_DIVISOR,
+        "Treatment fund": cost_cecx_insured / BUDGET_UNIT_DIVISOR,
+        "Total fund": cost_insurance / BUDGET_UNIT_DIVISOR,
     }
     return pd.DataFrame(payload)
 
@@ -1195,7 +1187,6 @@ def _compute_triparty_component_frame(
     cecx_treatment: float = 0.9,
     cecx_insured: tuple[float, float] = (0.7569, 0.2431),
     cecx_reimburse: tuple[float, float] = (0.479, 0.6211),
-    exchange_rate: float = USD_TO_RMB_2019,
     n_minor: int = 10,
 ) -> pd.DataFrame:
     model = sim_result.get_model()
@@ -1235,8 +1226,7 @@ def _compute_triparty_component_frame(
         product = model.config.vaccine_catalog.get_product(product_id)
         vaccine_cost_per_age = model.vaccination_cost_per_age(
             dose_cost=product.dose_cost,
-            doses_under_15=product.doses_under_15,
-            doses_over_15=product.doses_over_15,
+            dose_schedules=product.dose_schedules,
         )
 
     cost_vacc_age = (
@@ -1261,13 +1251,13 @@ def _compute_triparty_component_frame(
     payload = {
         "Year": years,
         "Medical insurance - Vaccination cost": (
-            cost_vacc_insurance * exchange_rate / BUDGET_UNIT_DIVISOR
+            cost_vacc_insurance / BUDGET_UNIT_DIVISOR
         ),
         "Medical insurance - Total expenditure": (
-            cost_insurance * exchange_rate / BUDGET_UNIT_DIVISOR
+            cost_insurance / BUDGET_UNIT_DIVISOR
         ),
-        "Government": cost_vacc * gov_rate * exchange_rate / BUDGET_UNIT_DIVISOR,
-        "Individual": cost_vacc * person_rate * exchange_rate / BUDGET_UNIT_DIVISOR,
+        "Government": cost_vacc * gov_rate / BUDGET_UNIT_DIVISOR,
+        "Individual": cost_vacc * person_rate / BUDGET_UNIT_DIVISOR,
     }
     return pd.DataFrame(payload)
 
@@ -1422,7 +1412,6 @@ def _build_budget_readme_dataframe() -> pd.DataFrame:
         ("Workbook purpose", "Budget impact analysis for optimal strategies"),
         ("Currency output", "RMB"),
         ("Unit", BUDGET_UNIT_LABEL),
-        ("Exchange rate", f"1 USD = {USD_TO_RMB_2019:.2f} RMB"),
         ("Base year", str(BUDGET_BEGIN_YEAR)),
         ("vacc_insured", "1.0"),
         ("vacc_reimburse", "1.0"),
@@ -1441,7 +1430,6 @@ def _build_copay_readme_dataframe() -> pd.DataFrame:
         ("Workbook purpose", "Co-payment impact analysis for optimal strategies"),
         ("Currency output", "RMB"),
         ("Unit", BUDGET_UNIT_LABEL),
-        ("Exchange rate", f"1 USD = {USD_TO_RMB_2019:.2f} RMB"),
         ("Base year", str(BUDGET_BEGIN_YEAR)),
         ("Scheme 3937", "personal 60.63% / medical insurance 39.37%"),
         ("Scheme 7428", "personal 25.72% / medical insurance 74.28%"),
@@ -1476,7 +1464,6 @@ def _build_triparty_readme_dataframe() -> pd.DataFrame:
         ),
         ("Currency output", "RMB"),
         ("Unit", BUDGET_UNIT_LABEL),
-        ("Exchange rate", f"1 USD = {USD_TO_RMB_2019:.2f} RMB"),
         ("Base year", str(BUDGET_BEGIN_YEAR)),
         (
             "Scheme",
@@ -1636,16 +1623,16 @@ def _build_tabs3_dataframe(
             )
             prefix = f"{years}y"
             record[f"{prefix} Original ICUR"] = _format_numeric(
-                matching["baseline_icur_rmb"]
+                matching["baseline_icur"]
             )
             record[f"{prefix} Lower limit ICUR"] = _format_numeric(
-                matching["lower_icur_rmb"]
+                matching["lower_icur"]
             )
             record[f"{prefix} Upper limit ICUR"] = _format_numeric(
-                matching["upper_icur_rmb"]
+                matching["upper_icur"]
             )
             record[f"{prefix} Absolute change in ICUR"] = _format_numeric(
-                matching["absolute_change_rmb"]
+                matching["absolute_change"]
             )
         records.append(record)
     return pd.DataFrame.from_records(records)
@@ -1912,17 +1899,17 @@ def _build_fig2(
     e_specs = (
         (
             "ic_per_cecx",
-            "Incremental cost per case of cervical\ncancer prevention (RMB)",
+            "Incremental cost per case of cervical\ncancer prevention (yuan)",
             20.0,
         ),
         (
             "ic_per_cecx_death",
-            "Incremental cost per cervical cancer\ndeath avoided (RMB)",
+            "Incremental cost per cervical cancer\ndeath avoided (yuan)",
             30.0,
         ),
         (
             "icur",
-            "Incremental cost per disability-adjusted\nlife year saved (RMB)",
+            "Incremental cost per disability-adjusted\nlife year saved (yuan)",
             20.0,
         ),
     )
@@ -2470,18 +2457,26 @@ def _build_figs1(
         axis.tick_params(labelbottom=False)
     fig.supxlabel("Final cervical cancer incidence (/100,000 women)", fontsize=11)
     fig.supylabel("ICUR", fontsize=11)
+    all_product_ids = sorted(
+        {
+            str(trial.params.get("target_product_id", "unknown"))
+            for _, _, result in search_results
+            for trial in result.study.trials
+            if trial.state.name == "COMPLETE"
+        }
+    )
     handles = [
         plt.Line2D(
             [0],
             [0],
             marker="o",
             linestyle="",
-            markerfacecolor=PRODUCT_COLORS[product_id],
+            markerfacecolor=PRODUCT_COLORS.get(product_id, "#6C757D"),
             markeredgecolor="none",
             markersize=6,
             label=_product_label(product_id),
         )
-        for product_id in ["bivalent", "quadrivalent", "nonavalent"]
+        for product_id in all_product_ids
     ]
     handles.extend(
         [
@@ -2626,20 +2621,20 @@ def _build_figs3(
         scenario_rows = [row for row in rows if row["scenario_years"] == years]
         scenario_rows = sorted(
             scenario_rows,
-            key=lambda row: float(row["absolute_change_rmb"]),
+            key=lambda row: float(row["absolute_change"]),
             reverse=True,
         )
         y_positions = list(range(len(scenario_rows)))
         axis.barh(
             [y - 0.16 for y in y_positions],
-            [row["lower_delta_rmb"] for row in scenario_rows],
+            [row["lower_delta"] for row in scenario_rows],
             height=0.28,
             color=lower_color,
             alpha=0.85,
         )
         axis.barh(
             [y + 0.16 for y in y_positions],
-            [row["upper_delta_rmb"] for row in scenario_rows],
+            [row["upper_delta"] for row in scenario_rows],
             height=0.28,
             color=upper_color,
             alpha=0.85,
@@ -2666,7 +2661,7 @@ def _build_figs3(
         )
         apply_scientific_format(axis, x=True, y=False)
 
-    fig.supxlabel("ΔICUR (RMB / DALY)", fontsize=11)
+    fig.supxlabel("ΔICUR (yuan / DALY)", fontsize=11)
     handles = [
         plt.Line2D([0], [0], color=lower_color, linewidth=6, label="Lower limit"),
         plt.Line2D([0], [0], color=upper_color, linewidth=6, label="Upper limit"),

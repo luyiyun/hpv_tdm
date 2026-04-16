@@ -85,8 +85,7 @@ class Evaluator:
             product = model.config.vaccine_catalog.get_product(vaccine_product_id)
             cost_vector = model.vaccination_cost_per_age(
                 dose_cost=product.dose_cost,
-                doses_under_15=product.doses_under_15,
-                doses_over_15=product.doses_over_15,
+                dose_schedules=product.dose_schedules,
             )
 
         cost_vacc = np.dot(cumulative_vaccinated, cost_vector)

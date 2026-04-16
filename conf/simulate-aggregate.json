@@ -309,34 +309,100 @@
     "coverage_by_age": null
   },
   "vaccine_catalog": {
-    "default_product_id": "bivalent",
+    "default_product_id": "domestic_bivalent",
     "products": {
-      "bivalent": {
-        "display_name": "Bivalent HPV vaccine",
+      "domestic_bivalent": {
+        "display_name": "Domestic bivalent HPV vaccine",
         "aggregate_efficacy": 0.691,
-        "dose_cost": 153.2,
-        "doses_under_15": 2,
-        "doses_over_15": 3,
+        "dose_cost": 328.99666666666667,
+        "dose_schedules": [
+          {
+            "doses": 2,
+            "age_min": 9,
+            "age_max": 14
+          },
+          {
+            "doses": 3,
+            "age_min": 15,
+            "age_max": 45
+          }
+        ],
         "group_protection": {
           "hr_16_18": 1.0
         }
       },
-      "quadrivalent": {
-        "display_name": "Quadrivalent HPV vaccine",
+      "imported_bivalent": {
+        "display_name": "Imported bivalent HPV vaccine",
         "aggregate_efficacy": 0.691,
-        "dose_cost": 262.38,
-        "doses_under_15": 2,
-        "doses_over_15": 3,
+        "dose_cost": 579.99,
+        "dose_schedules": [
+          {
+            "doses": 2,
+            "age_min": 9,
+            "age_max": 14
+          },
+          {
+            "doses": 3,
+            "age_min": 15,
+            "age_max": 45
+          }
+        ],
         "group_protection": {
           "hr_16_18": 1.0
         }
       },
-      "nonavalent": {
-        "display_name": "Nonavalent HPV vaccine",
+      "imported_quadrivalent": {
+        "display_name": "Imported quadrivalent HPV vaccine",
+        "aggregate_efficacy": 0.691,
+        "dose_cost": 797.9933333333333,
+        "dose_schedules": [
+          {
+            "doses": 3,
+            "age_min": 9,
+            "age_max": 45
+          }
+        ],
+        "group_protection": {
+          "hr_16_18": 1.0
+        }
+      },
+      "domestic_nonavalent": {
+        "display_name": "Domestic nonavalent HPV vaccine",
         "aggregate_efficacy": 0.921,
-        "dose_cost": 574.71,
-        "doses_under_15": 2,
-        "doses_over_15": 3,
+        "dose_cost": 499.0,
+        "dose_schedules": [
+          {
+            "doses": 2,
+            "age_min": 9,
+            "age_max": 17
+          },
+          {
+            "doses": 3,
+            "age_min": 18,
+            "age_max": 45
+          }
+        ],
+        "group_protection": {
+          "hr_16_18": 1.0,
+          "hr_31_33_45_52_58": 1.0
+        }
+      },
+      "imported_nonavalent": {
+        "display_name": "Imported nonavalent HPV vaccine",
+        "aggregate_efficacy": 0.921,
+        "dose_cost": 1298.0033333333333,
+        "dose_schedules": [
+          {
+            "doses": 2,
+            "age_min": 9,
+            "age_max": 14
+          },
+          {
+            "doses": 3,
+            "age_min": 15,
+            "age_max": 45
+          }
+        ],
         "group_protection": {
           "hr_16_18": 1.0,
           "hr_31_33_45_52_58": 1.0

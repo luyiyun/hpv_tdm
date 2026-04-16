@@ -2,7 +2,7 @@
     "objective_mode": "multi_objective",
     "seed": 1234,
     "n_trials": 5000,
-    "n_jobs": 10,
+    "n_jobs": 30,
     "incidence_threshold": 4e-05,
     "strategy": "conti_one_cover",
     "n_vacc_ages": 2,
