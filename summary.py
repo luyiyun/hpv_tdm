@@ -50,6 +50,26 @@ class SensitivityParameter:
     value_unit: str
 
 
+@dataclass(frozen=True)
+class Fig2Scenario:
+    years: int
+    directory: Path
+    time: np.ndarray
+    age_labels: list[str]
+    incidence_reduction: np.ndarray
+    mortality_reduction: np.ndarray
+    avoid_cecx: np.ndarray
+    avoid_cecx_deaths: np.ndarray
+    avoid_daly: np.ndarray
+    vaccine_number: np.ndarray
+    vaccine_cost: np.ndarray
+    cost_saved: np.ndarray
+    net_cost: np.ndarray
+    ic_per_cecx: np.ndarray
+    ic_per_cecx_death: np.ndarray
+    icur: np.ndarray
+
+
 SENSITIVITY_PARAMETERS: tuple[SensitivityParameter, ...] = (
     SensitivityParameter(
         runtime_key="epsilon_f",
@@ -221,6 +241,11 @@ def _parse_args() -> argparse.Namespace:
         (
             "tab1",
             "Summarize the selected optimal vaccination strategies across scenarios.",
+        ),
+        (
+            "fig2",
+            "Generate the main-text Figure 2 for age-heterogeneous "
+            "health and economic outcomes.",
         ),
         (
             "figs1",
@@ -522,6 +547,148 @@ def _build_reference_config(
     )
 
 
+def _compact_age_label(label: str) -> str:
+    match = re.match(r"^\[(.+),\s*(.+)\)$", label.strip())
+    if match is None:
+        return label
+    lower, upper = match.groups()
+    if upper == "inf":
+        return f"{lower}+"
+    return f"{lower}\u2013{upper}"
+
+
+def _rate_matrix_per_100k(
+    matrix: np.ndarray,
+    population: np.ndarray,
+) -> np.ndarray:
+    return (
+        np.divide(
+            matrix,
+            population,
+            out=np.zeros_like(matrix, dtype=float),
+            where=population > 0,
+        )
+        * 1e5
+    )
+
+
+def _safe_ratio(
+    numerator: np.ndarray,
+    denominator: np.ndarray,
+) -> np.ndarray:
+    return np.divide(
+        numerator,
+        denominator,
+        out=np.full_like(numerator, np.nan, dtype=float),
+        where=denominator > 0,
+    )
+
+
+def _build_fig2_scenario(search_dir: Path) -> Fig2Scenario:
+    required = (
+        "best_model_config.json",
+        "evaluation_config.json",
+        "best_simulation.h5",
+    )
+    missing = [name for name in required if not (search_dir / name).exists()]
+    if missing:
+        raise ValueError(
+            f"search result directory {search_dir} is missing required files: "
+            f"{', '.join(missing)}"
+        )
+
+    years = _scenario_years_from_name(search_dir)
+    model_config = _load_model_config(search_dir / "best_model_config.json")
+    evaluation_config = _load_evaluation_config(search_dir / "evaluation_config.json")
+
+    vaccinated_simulation = SimulationResult.from_hdf(search_dir / "best_simulation.h5")
+    vaccinated_model = vaccinated_simulation.get_model()
+    reference_model = _build_model(_build_reference_config(model_config))
+    reference_simulation = reference_model.simulate()
+
+    evaluator = Evaluator(evaluation_config)
+    evaluation = evaluator.evaluate(vaccinated_simulation, reference_simulation)
+    vaccinated_absolute = evaluator._evaluate_absolute(vaccinated_simulation)
+    reference_absolute = evaluator._evaluate_absolute(reference_simulation)
+
+    vaccinated_population = np.asarray(
+        vaccinated_model.total_female_population(vaccinated_simulation.state),
+        dtype=float,
+    )
+    reference_population = np.asarray(
+        reference_model.total_female_population(reference_simulation.state),
+        dtype=float,
+    )
+    vaccinated_incidence = _rate_matrix_per_100k(
+        np.asarray(vaccinated_model.incidence_matrix(vaccinated_simulation.state)),
+        vaccinated_population,
+    )
+    reference_incidence = _rate_matrix_per_100k(
+        np.asarray(reference_model.incidence_matrix(reference_simulation.state)),
+        reference_population,
+    )
+    vaccinated_mortality = _rate_matrix_per_100k(
+        np.asarray(vaccinated_model.mortality_matrix(vaccinated_simulation.state)),
+        vaccinated_population,
+    )
+    reference_mortality = _rate_matrix_per_100k(
+        np.asarray(reference_model.mortality_matrix(reference_simulation.state)),
+        reference_population,
+    )
+
+    incidence_reduction = np.clip(reference_incidence - vaccinated_incidence, 0, None)
+    mortality_reduction = np.clip(reference_mortality - vaccinated_mortality, 0, None)
+
+    total_cost_diff_rmb = (
+        vaccinated_absolute.total_cost - reference_absolute.total_cost
+    ) * USD_TO_RMB_2019
+    avoid_cecx = np.asarray(evaluation.avoid_cecx.sum(axis=1), dtype=float)
+    avoid_cecx_deaths = np.asarray(
+        evaluation.avoid_cecx_deaths.sum(axis=1),
+        dtype=float,
+    )
+    avoid_daly = np.asarray(evaluation.avoid_daly, dtype=float)
+    vaccine_number = (
+        np.asarray(vaccinated_absolute.cumulative_vaccinated.sum(axis=1), dtype=float)
+        / 10_000
+    )
+    vaccine_cost = (
+        np.asarray(vaccinated_absolute.cost_vacc, dtype=float)
+        * USD_TO_RMB_2019
+        / BUDGET_UNIT_DIVISOR
+    )
+    cost_saved = (
+        (
+            np.asarray(reference_absolute.cost_cecx, dtype=float)
+            - np.asarray(vaccinated_absolute.cost_cecx, dtype=float)
+        )
+        * USD_TO_RMB_2019
+        / BUDGET_UNIT_DIVISOR
+    )
+    net_cost = vaccine_cost - cost_saved
+
+    return Fig2Scenario(
+        years=years,
+        directory=search_dir,
+        time=np.asarray(vaccinated_simulation.time, dtype=float),
+        age_labels=[
+            _compact_age_label(label) for label in vaccinated_model.agebin_names
+        ],
+        incidence_reduction=incidence_reduction,
+        mortality_reduction=mortality_reduction,
+        avoid_cecx=avoid_cecx,
+        avoid_cecx_deaths=avoid_cecx_deaths,
+        avoid_daly=avoid_daly,
+        vaccine_number=vaccine_number,
+        vaccine_cost=vaccine_cost,
+        cost_saved=cost_saved,
+        net_cost=net_cost,
+        ic_per_cecx=_safe_ratio(total_cost_diff_rmb, avoid_cecx),
+        ic_per_cecx_death=_safe_ratio(total_cost_diff_rmb, avoid_cecx_deaths),
+        icur=np.asarray(evaluation.icur, dtype=float) * USD_TO_RMB_2019,
+    )
+
+
 def _replace_transmission_value(
     model_config: AggregateModelConfig | SubtypeGroupedModelConfig,
     key: str,
@@ -623,8 +790,7 @@ def _compute_sensitivity_payloads(
 ) -> tuple[list[tuple[int, Path]], list[dict[str, object]]]:
     search_dirs = _discover_search_dirs(results_root, results_glob)
     scenarios = [
-        (_scenario_years_from_name(directory), directory)
-        for directory in search_dirs
+        (_scenario_years_from_name(directory), directory) for directory in search_dirs
     ]
     rows: list[dict[str, object]] = []
     for years, search_dir in scenarios:
@@ -683,7 +849,9 @@ def _compute_sensitivity_payloads(
         runtime_results["epsilon_m"] = epsilon_m_results
 
         dose_cost = float(
-            model_config.vaccine_catalog.get_product(model_config.resolved_product_id()).dose_cost
+            model_config.vaccine_catalog.get_product(
+                model_config.resolved_product_id()
+            ).dose_cost
         )
         dose_cost_results = {}
         for bound_name, bound_value in {
@@ -1473,6 +1641,370 @@ def _subplot_panel_label(index: int) -> str:
     return chr(ord("A") + index)
 
 
+def _format_heatmap_axis(
+    ax: plt.Axes,
+    *,
+    time: np.ndarray,
+    age_labels: list[str],
+    show_xlabel: bool,
+    show_ylabel: bool,
+) -> None:
+    ax.set_facecolor("white")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_linewidth(0.9)
+    ax.spines["bottom"].set_linewidth(0.9)
+    ax.tick_params(axis="both", labelsize=7.8, width=0.9, length=3, color="#444444")
+    ax.grid(False)
+    if show_xlabel:
+        ax.set_xlabel("Time (years)", fontsize=9)
+    if show_ylabel:
+        tick_step = 2 if len(age_labels) <= 20 else 3
+        tick_indices = list(range(0, len(age_labels), tick_step))
+        if (len(age_labels) - 1) not in tick_indices:
+            tick_indices.append(len(age_labels) - 1)
+        ax.set_ylabel("Age group", fontsize=9)
+        ax.set_yticks([index + 0.5 for index in tick_indices])
+        ax.set_yticklabels([age_labels[index] for index in tick_indices])
+    else:
+        ax.set_yticks([])
+    ax.set_xlim(float(time[0]), float(time[-1]))
+    ax.set_ylim(0, len(age_labels))
+
+
+def _build_fig2(
+    output_dir: Path,
+    scenarios: list[Fig2Scenario],
+) -> Path:
+    incidence_stack = np.concatenate(
+        [scenario.incidence_reduction.ravel() for scenario in scenarios]
+    )
+    mortality_stack = np.concatenate(
+        [scenario.mortality_reduction.ravel() for scenario in scenarios]
+    )
+    incidence_vmax = float(
+        np.percentile(incidence_stack[np.isfinite(incidence_stack)], 99.5)
+    )
+    mortality_vmax = float(
+        np.percentile(mortality_stack[np.isfinite(mortality_stack)], 99.5)
+    )
+    incidence_vmax = max(incidence_vmax, 1e-6)
+    mortality_vmax = max(mortality_vmax, 1e-6)
+
+    horizon_colors = {
+        scenario.years: color
+        for scenario, color in zip(
+            scenarios,
+            ["#2C7FB8", "#F28E2B", "#4E79A7", "#D1495B", "#7FB069", "#6A4C93"],
+        )
+    }
+
+    fig = plt.figure(figsize=(16.6, 24.8))
+    outer = fig.add_gridspec(
+        5,
+        1,
+        height_ratios=[2.65, 2.65, 1.38, 1.28, 1.48],
+        hspace=0.34,
+    )
+    grid_a = outer[0].subgridspec(2, 3, wspace=0.14, hspace=0.18)
+    grid_b = outer[1].subgridspec(2, 3, wspace=0.14, hspace=0.18)
+    grid_c = outer[2].subgridspec(1, 4, wspace=0.24)
+    grid_d = outer[3].subgridspec(1, 3, wspace=0.24)
+    grid_e = outer[4].subgridspec(1, 3, wspace=0.24)
+
+    axes_a = np.array(
+        [fig.add_subplot(grid_a[index // 3, index % 3]) for index in range(6)]
+    )
+    axes_b = np.array(
+        [fig.add_subplot(grid_b[index // 3, index % 3]) for index in range(6)]
+    )
+    axes_c = np.array([fig.add_subplot(grid_c[0, index]) for index in range(4)])
+    axes_d = np.array([fig.add_subplot(grid_d[0, index]) for index in range(3)])
+    axes_e = np.array([fig.add_subplot(grid_e[0, index]) for index in range(3)])
+
+    heatmap_a = None
+    heatmap_b = None
+    for index, (scenario, axis) in enumerate(zip(scenarios, axes_a)):
+        heatmap_a = axis.imshow(
+            scenario.incidence_reduction.T,
+            origin="lower",
+            aspect="auto",
+            extent=(scenario.time[0], scenario.time[-1], 0, len(scenario.age_labels)),
+            cmap="YlOrRd",
+            vmin=0,
+            vmax=incidence_vmax,
+            interpolation="nearest",
+        )
+        axis.set_title(f"{scenario.years}-year horizon", fontsize=9.5, pad=4)
+        if index == 0:
+            axis.text(
+                -0.24,
+                1.12,
+                "A",
+                transform=axis.transAxes,
+                fontsize=16,
+                fontweight="bold",
+                va="top",
+                ha="left",
+            )
+        _format_heatmap_axis(
+            axis,
+            time=scenario.time,
+            age_labels=scenario.age_labels,
+            show_xlabel=index >= 3,
+            show_ylabel=index % 3 == 0,
+        )
+
+    for index, (scenario, axis) in enumerate(zip(scenarios, axes_b)):
+        heatmap_b = axis.imshow(
+            scenario.mortality_reduction.T,
+            origin="lower",
+            aspect="auto",
+            extent=(scenario.time[0], scenario.time[-1], 0, len(scenario.age_labels)),
+            cmap="PuBuGn",
+            vmin=0,
+            vmax=mortality_vmax,
+            interpolation="nearest",
+        )
+        axis.set_title(f"{scenario.years}-year horizon", fontsize=9.5, pad=4)
+        if index == 0:
+            axis.text(
+                -0.24,
+                1.12,
+                "B",
+                transform=axis.transAxes,
+                fontsize=16,
+                fontweight="bold",
+                va="top",
+                ha="left",
+            )
+        _format_heatmap_axis(
+            axis,
+            time=scenario.time,
+            age_labels=scenario.age_labels,
+            show_xlabel=index >= 3,
+            show_ylabel=index % 3 == 0,
+        )
+
+    colorbar_a = fig.colorbar(
+        heatmap_a,
+        ax=axes_a.tolist(),
+        fraction=0.018,
+        pad=0.012,
+    )
+    colorbar_a.set_label(
+        "Incidence reduction relative to no vaccination\n(/100,000 women)",
+        fontsize=9,
+    )
+    colorbar_a.ax.tick_params(labelsize=8)
+
+    colorbar_b = fig.colorbar(
+        heatmap_b,
+        ax=axes_b.tolist(),
+        fraction=0.018,
+        pad=0.012,
+    )
+    colorbar_b.set_label(
+        "Mortality reduction relative to no vaccination\n(/100,000 women)",
+        fontsize=9,
+    )
+    colorbar_b.ax.tick_params(labelsize=8)
+
+    c_specs = (
+        ("vaccine_number", "Vaccine number\n(10,000 doses)", 1.0),
+        ("vaccine_cost", "Vaccine cost\n(10,000 yuan)", 1.0),
+        ("cost_saved", "Cost saved\n(10,000 yuan)", 1.0),
+        ("net_cost", "Net cost\n(10,000 yuan)", 1.0),
+    )
+    for index, (axis, (field, ylabel, divisor)) in enumerate(zip(axes_c, c_specs)):
+        for scenario in scenarios:
+            axis.plot(
+                scenario.time,
+                getattr(scenario, field) / divisor,
+                color=horizon_colors[scenario.years],
+                linewidth=1.8,
+                label=f"{scenario.years} years",
+            )
+        axis.set_title(ylabel, fontsize=10, pad=4)
+        axis.set_xlabel("Time (years)", fontsize=9.5)
+        axis.set_ylabel("")
+        apply_scientific_format(axis, x=False, y=True)
+        apply_nature_style(fig, axis)
+        if index == 0:
+            axis.text(
+                -0.22,
+                1.12,
+                "C",
+                transform=axis.transAxes,
+                fontsize=16,
+                fontweight="bold",
+                va="top",
+                ha="left",
+            )
+
+    d_specs = (
+        (
+            "avoid_cecx",
+            "Cases of cervical cancer prevented\n(10,000 cases)",
+            10_000.0,
+        ),
+        (
+            "avoid_cecx_deaths",
+            "Cervical cancer deaths prevented\n(10,000 deaths)",
+            10_000.0,
+        ),
+        ("avoid_daly", "Disability-adjusted life years saved", 1.0),
+    )
+    for index, (axis, (field, ylabel, divisor)) in enumerate(zip(axes_d, d_specs)):
+        for scenario in scenarios:
+            axis.plot(
+                scenario.time,
+                getattr(scenario, field) / divisor,
+                color=horizon_colors[scenario.years],
+                linewidth=1.8,
+                label=f"{scenario.years} years",
+            )
+        axis.set_title(ylabel, fontsize=10, pad=4)
+        axis.set_xlabel("Time (years)", fontsize=9.5)
+        axis.set_ylabel("")
+        apply_scientific_format(axis, x=False, y=True)
+        apply_nature_style(fig, axis)
+        if index == 0:
+            axis.text(
+                -0.22,
+                1.12,
+                "D",
+                transform=axis.transAxes,
+                fontsize=16,
+                fontweight="bold",
+                va="top",
+                ha="left",
+            )
+
+    e_specs = (
+        (
+            "ic_per_cecx",
+            "Incremental cost per case of cervical\ncancer prevention (RMB)",
+            20.0,
+        ),
+        (
+            "ic_per_cecx_death",
+            "Incremental cost per cervical cancer\ndeath avoided (RMB)",
+            30.0,
+        ),
+        (
+            "icur",
+            "Incremental cost per disability-adjusted\nlife year saved (RMB)",
+            20.0,
+        ),
+    )
+    for index, (axis, (field, ylabel, inset_start)) in enumerate(zip(axes_e, e_specs)):
+        for scenario in scenarios:
+            values = np.asarray(getattr(scenario, field), dtype=float)
+            axis.plot(
+                scenario.time,
+                values,
+                color=horizon_colors[scenario.years],
+                linewidth=1.8,
+                label=f"{scenario.years} years",
+            )
+        axis.set_title(ylabel, fontsize=10, pad=4)
+        axis.set_xlabel("Time (years)", fontsize=9.5)
+        axis.set_ylabel("")
+        apply_scientific_format(axis, x=False, y=True)
+        apply_nature_style(fig, axis)
+        if index == 0:
+            axis.text(
+                -0.22,
+                1.12,
+                "E",
+                transform=axis.transAxes,
+                fontsize=16,
+                fontweight="bold",
+                va="top",
+                ha="left",
+            )
+
+        inset = axis.inset_axes([0.18, 0.15, 0.72, 0.7])
+        inset_values: list[np.ndarray] = []
+        for scenario in scenarios:
+            values = np.asarray(getattr(scenario, field), dtype=float)
+            mask = np.isfinite(values) & (scenario.time >= inset_start)
+            if not np.any(mask):
+                continue
+            inset.plot(
+                scenario.time[mask],
+                values[mask],
+                color=horizon_colors[scenario.years],
+                linewidth=1.2,
+            )
+            inset_values.append(values[mask])
+        if inset_values:
+            combined = np.concatenate(inset_values)
+            finite = combined[np.isfinite(combined)]
+            if finite.size > 0:
+                lower = float(np.percentile(finite, 2))
+                upper = float(np.percentile(finite, 98))
+                if np.isclose(lower, upper):
+                    margin = max(abs(lower) * 0.1, 1.0)
+                    lower -= margin
+                    upper += margin
+                inset.set_xlim(
+                    inset_start,
+                    max(scenario.years for scenario in scenarios),
+                )
+                inset.set_ylim(lower, upper)
+        inset.tick_params(labelsize=6.5, width=0.7, length=2.5)
+        inset.spines["top"].set_visible(False)
+        inset.spines["right"].set_visible(False)
+        inset.grid(axis="y", color="#E1E6EF", linewidth=0.7, alpha=0.8)
+        apply_scientific_format(inset, x=False, y=True)
+        axis.indicate_inset_zoom(inset, edgecolor="#666666", alpha=0.7)
+
+    legend_handles = [
+        plt.Line2D(
+            [0],
+            [0],
+            color=horizon_colors[scenario.years],
+            linewidth=2.0,
+            label=f"{scenario.years} years",
+        )
+        for scenario in scenarios
+    ]
+    fig.legend(
+        handles=legend_handles,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.91),
+        ncol=len(scenarios),
+        frameon=False,
+        fontsize=9,
+    )
+    a_title_y = max(axis.get_position().y1 for axis in axes_a[:3]) + 0.008
+    b_title_y = max(axis.get_position().y1 for axis in axes_b[:3]) + 0.008
+    fig.text(
+        0.5,
+        a_title_y,
+        "Incidence reduction relative to no vaccination",
+        ha="center",
+        va="bottom",
+        fontsize=11,
+    )
+    fig.text(
+        0.5,
+        b_title_y,
+        "Mortality reduction relative to no vaccination",
+        ha="center",
+        va="bottom",
+        fontsize=11,
+    )
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / "figure_2.png"
+    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    return output_path
+
+
 def _build_figs1(
     output_dir: Path, search_results: list[tuple[int, Path, SearchResult]]
 ) -> Path:
@@ -2158,6 +2690,13 @@ def _run_tabs1(args: argparse.Namespace) -> None:
     print(f"Wrote {markdown_path}")
 
 
+def _run_fig2(args: argparse.Namespace) -> None:
+    search_dirs = _discover_search_dirs(Path(args.results_root), args.results_glob)
+    scenarios = [_build_fig2_scenario(search_dir) for search_dir in search_dirs]
+    output_path = _build_fig2(Path(args.output_dir), scenarios)
+    print(f"Wrote {output_path}")
+
+
 def _run_figs1(args: argparse.Namespace) -> None:
     search_results = _load_search_results(Path(args.results_root), args.results_glob)
     output_path = _build_figs1(Path(args.output_dir), search_results)
@@ -2270,6 +2809,9 @@ def main() -> None:
         return
     if args.command == "tabs1":
         _run_tabs1(args)
+        return
+    if args.command == "fig2":
+        _run_fig2(args)
         return
     if args.command == "figs1":
         _run_figs1(args)
