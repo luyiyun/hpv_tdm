@@ -2468,8 +2468,6 @@ def _build_figs1(
         apply_scientific_format(axis, x=False, y=True)
     for axis in axes_flat[:4]:
         axis.tick_params(labelbottom=False)
-    for axis in [axes_flat[1], axes_flat[3], axes_flat[5]]:
-        axis.tick_params(labelleft=False)
     fig.supxlabel("Final cervical cancer incidence (/100,000 women)", fontsize=11)
     fig.supylabel("ICUR", fontsize=11)
     handles = [
