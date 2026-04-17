@@ -31,13 +31,15 @@ from hpv_tdm.result._plot import (
 BUDGET_BEGIN_YEAR = 2019
 BUDGET_UNIT_LABEL = "10,000 yuan"
 BUDGET_UNIT_DIVISOR = 10_000
-COPAY_SCHEMES: tuple[tuple[str, float, float], ...] = (
-    ("3937", 0.3937, 0.6063),
-    ("7428", 0.7428, 0.2572),
-)
+DEFAULT_COPAY_PERSON_SHARES: tuple[float, float] = (0.6063, 0.2572)
 TRIPARTY_MEDICAL_INSURANCE = 0.2791
 TRIPARTY_GOVERNMENT = 0.2619
 TRIPARTY_INDIVIDUAL = 0.4590
+DEFAULT_FIG3_PRICE_DEMAND_METHOD = "weibull"
+DEFAULT_FIG3_PRICE_DEMAND_COLUMN = "您预期的接种九价疫苗价格是多少全程3针"
+DEFAULT_FIG3_PRICE_DEMAND_QUERY = "您对当前进口九价疫苗的看法全程3针==1"
+DEFAULT_FIG3_PRICE_DEMAND_DOSES = 2
+DEFAULT_FIG3_PRICE_DEMAND_WTP_SCALE = 0.5
 PRICE_DEMAND_INCOME_COLUMN = "家庭月平均收入元"
 PRICE_DEMAND_INCOME_LEVELS = np.array([1800, 6000, 9000, 11000, 18000, 23000, 35000])
 PRICE_DEMAND_WTP_COLUMNS: dict[str, tuple[str, ...]] = {
@@ -228,6 +230,101 @@ def _parse_args() -> argparse.Namespace:
         default="summary",
         help="Directory used to store the generated co-payment workbook.",
     )
+    copay_parser.add_argument(
+        "--copay-person-shares",
+        type=float,
+        nargs=2,
+        metavar=("SHARE1", "SHARE2"),
+        default=DEFAULT_COPAY_PERSON_SHARES,
+        help=(
+            "Two personal payment shares used in the co-payment analysis. "
+            "Defaults to 0.6063 and 0.2572."
+        ),
+    )
+
+    demand_parser = subparsers.add_parser(
+        "price-demand",
+        help=(
+            "Predict demand from the fitted price-demand curve for one "
+            "income-price pair."
+        ),
+    )
+    demand_parser.add_argument(
+        "--results-glob",
+        default="search-*y",
+        help="Glob pattern under results/ used to discover scenario directories.",
+    )
+    demand_parser.add_argument(
+        "--results-root",
+        default="results",
+        help="Root directory containing search result folders.",
+    )
+    demand_parser.add_argument(
+        "--price-demand-path",
+        default="data/price_demand_data.dta",
+        help="Path to the Stata file used for the price-demand function.",
+    )
+    demand_parser.add_argument(
+        "--price-demand-method",
+        choices=("weibull", "empirical"),
+        default="weibull",
+        help="Method used to estimate demand from the price-demand data.",
+    )
+    demand_parser.add_argument(
+        "--price-demand-column",
+        default=None,
+        help=(
+            "Optional explicit Stata column name used to build the price-demand "
+            "curve. When omitted, the script chooses a default column based on "
+            "the selected vaccine product."
+        ),
+    )
+    demand_parser.add_argument(
+        "--price-demand-query",
+        default=None,
+        help=(
+            "Optional pandas query expression applied to the price-demand Stata "
+            "dataset before fitting or plotting. Defaults to using all samples."
+        ),
+    )
+    demand_parser.add_argument(
+        "--price-demand-doses",
+        type=int,
+        choices=(2, 3),
+        default=None,
+        help=(
+            "Optional dose count used to rescale the price-demand curve after "
+            "converting the survey price to a per-dose basis. Defaults to the "
+            "dose count used by the selected optimal strategy."
+        ),
+    )
+    demand_parser.add_argument(
+        "--price-demand-wtp-scale",
+        type=float,
+        default=1.0,
+        help=(
+            "Multiplier applied to WTP after converting the survey price to the "
+            "chosen plotting dose schedule. Used to reflect the gap between "
+            "stated willingness and actual behavior."
+        ),
+    )
+    demand_parser.add_argument(
+        "--income",
+        type=float,
+        required=True,
+        help="Household monthly income used to predict demand.",
+    )
+    demand_target_group = demand_parser.add_mutually_exclusive_group(required=True)
+    demand_target_group.add_argument(
+        "--price",
+        type=float,
+        help="Vaccine price under the plotted dose schedule used to predict demand.",
+    )
+    demand_target_group.add_argument(
+        "--demand",
+        type=float,
+        help="Target demand used to infer the corresponding vaccine price.",
+    )
 
     triparty_parser = subparsers.add_parser(
         "triparty",
@@ -284,7 +381,7 @@ def _parse_args() -> argparse.Namespace:
     all_parser.add_argument(
         "--price-demand-method",
         choices=("weibull", "empirical"),
-        default="weibull",
+        default=DEFAULT_FIG3_PRICE_DEMAND_METHOD,
         help=(
             "Method used to build the price-demand panel: a Weibull AFT fit or "
             "an empirical demand curve grouped by household income."
@@ -292,7 +389,7 @@ def _parse_args() -> argparse.Namespace:
     )
     all_parser.add_argument(
         "--price-demand-column",
-        default=None,
+        default=DEFAULT_FIG3_PRICE_DEMAND_COLUMN,
         help=(
             "Optional explicit Stata column name used to build the price-demand "
             "curve. When omitted, the script chooses a default column based on "
@@ -301,7 +398,7 @@ def _parse_args() -> argparse.Namespace:
     )
     all_parser.add_argument(
         "--price-demand-query",
-        default=None,
+        default=DEFAULT_FIG3_PRICE_DEMAND_QUERY,
         help=(
             "Optional pandas query expression applied to the price-demand Stata "
             "dataset before fitting or plotting. Defaults to using all samples."
@@ -311,7 +408,7 @@ def _parse_args() -> argparse.Namespace:
         "--price-demand-doses",
         type=int,
         choices=(2, 3),
-        default=None,
+        default=DEFAULT_FIG3_PRICE_DEMAND_DOSES,
         help=(
             "Optional dose count used to rescale the price-demand curve after "
             "converting the survey price to a per-dose basis. Defaults to the "
@@ -321,7 +418,7 @@ def _parse_args() -> argparse.Namespace:
     all_parser.add_argument(
         "--price-demand-wtp-scale",
         type=float,
-        default=1.0,
+        default=DEFAULT_FIG3_PRICE_DEMAND_WTP_SCALE,
         help=(
             "Multiplier applied to WTP after converting the survey price to the "
             "chosen plotting dose schedule. Used to reflect the gap between "
@@ -358,6 +455,17 @@ def _parse_args() -> argparse.Namespace:
         help=(
             "Optional path to the multi-party workbook. "
             "Defaults to <output-dir>/triparty_impact.xlsx."
+        ),
+    )
+    all_parser.add_argument(
+        "--copay-person-shares",
+        type=float,
+        nargs=2,
+        metavar=("SHARE1", "SHARE2"),
+        default=DEFAULT_COPAY_PERSON_SHARES,
+        help=(
+            "Two personal payment shares used in the co-payment analysis. "
+            "Defaults to 0.6063 and 0.2572."
         ),
     )
 
@@ -464,7 +572,7 @@ def _parse_args() -> argparse.Namespace:
             figure_parser.add_argument(
                 "--price-demand-method",
                 choices=("weibull", "empirical"),
-                default="weibull",
+                default=DEFAULT_FIG3_PRICE_DEMAND_METHOD,
                 help=(
                     "Method used to build the price-demand panel: a Weibull AFT "
                     "fit or an empirical demand curve grouped by household income."
@@ -472,7 +580,7 @@ def _parse_args() -> argparse.Namespace:
             )
             figure_parser.add_argument(
                 "--price-demand-column",
-                default=None,
+                default=DEFAULT_FIG3_PRICE_DEMAND_COLUMN,
                 help=(
                     "Optional explicit Stata column name used to build the "
                     "price-demand curve. When omitted, the script chooses a "
@@ -481,7 +589,7 @@ def _parse_args() -> argparse.Namespace:
             )
             figure_parser.add_argument(
                 "--price-demand-query",
-                default=None,
+                default=DEFAULT_FIG3_PRICE_DEMAND_QUERY,
                 help=(
                     "Optional pandas query expression applied to the "
                     "price-demand Stata dataset before fitting or plotting. "
@@ -492,7 +600,7 @@ def _parse_args() -> argparse.Namespace:
                 "--price-demand-doses",
                 type=int,
                 choices=(2, 3),
-                default=None,
+                default=DEFAULT_FIG3_PRICE_DEMAND_DOSES,
                 help=(
                     "Optional dose count used to rescale the price-demand curve "
                     "after converting the survey price to a per-dose basis. "
@@ -503,7 +611,7 @@ def _parse_args() -> argparse.Namespace:
             figure_parser.add_argument(
                 "--price-demand-wtp-scale",
                 type=float,
-                default=1.0,
+                default=DEFAULT_FIG3_PRICE_DEMAND_WTP_SCALE,
                 help=(
                     "Multiplier applied to WTP after converting the survey "
                     "price to the chosen plotting dose schedule. Used to "
@@ -722,6 +830,52 @@ def _discover_search_dirs(results_root: Path, results_glob: str) -> list[Path]:
             f"{results_glob!r} under {results_root}"
         )
     return search_dirs
+
+
+def _format_copay_scheme_code(vacc_reimburse: float) -> str:
+    return f"{int(round(vacc_reimburse * 10_000)):04d}"
+
+
+def _build_copay_schemes(
+    person_shares: tuple[float, float] | list[float],
+) -> tuple[tuple[str, float, float], ...]:
+    schemes: list[tuple[str, float, float]] = []
+    for person_share in person_shares:
+        if not 0 <= float(person_share) <= 1:
+            raise ValueError(
+                f"co-payment personal share must be within [0, 1], got {person_share}"
+            )
+        vacc_reimburse = 1.0 - float(person_share)
+        schemes.append(
+            (
+                _format_copay_scheme_code(vacc_reimburse),
+                vacc_reimburse,
+                float(person_share),
+            )
+        )
+    return tuple(schemes)
+
+
+def _copay_scheme_title(scheme_code: str) -> str:
+    medical_share = int(scheme_code) / 10_000
+    personal_share = 1.0 - medical_share
+    return (
+        f"personal {personal_share * 100:.2f}% / "
+        f"medical insurance {medical_share * 100:.2f}%"
+    )
+
+
+def _copay_scheme_meta_from_dataframe(
+    dataframe: pd.DataFrame,
+) -> tuple[tuple[str, str], ...]:
+    scheme_codes = []
+    for column in dataframe.columns:
+        match = re.fullmatch(r"(\d{4}) Vaccination cost", str(column))
+        if match is not None:
+            scheme_codes.append(match.group(1))
+    if not scheme_codes:
+        raise ValueError("no co-payment scheme columns were found in the workbook")
+    return tuple((code, _copay_scheme_title(code)) for code in sorted(scheme_codes))
 
 
 def _load_search_strategy_metadata(search_dir: Path) -> dict[str, object]:
@@ -1546,7 +1700,11 @@ def _build_budget_sheet_dataframe(search_dir: Path) -> tuple[int, pd.DataFrame]:
     return years, ordered
 
 
-def _build_copay_sheet_dataframe(search_dir: Path) -> tuple[int, pd.DataFrame]:
+def _build_copay_sheet_dataframe(
+    search_dir: Path,
+    *,
+    person_shares: tuple[float, float] | list[float],
+) -> tuple[int, pd.DataFrame]:
     _validate_budget_dir(search_dir)
     years = _scenario_years_from_name(search_dir)
     model_config = _load_model_config(search_dir / "best_model_config.json")
@@ -1563,7 +1721,8 @@ def _build_copay_sheet_dataframe(search_dir: Path) -> tuple[int, pd.DataFrame]:
     merged = reference_df.loc[:, ["Year", "Total fund"]].rename(
         columns={"Total fund": "No vaccination baseline fund"}
     )
-    for scheme_code, vacc_reimburse, _ in COPAY_SCHEMES:
+    ordered_columns = ["Year"]
+    for scheme_code, vacc_reimburse, _ in _build_copay_schemes(person_shares):
         scheme_df = _compute_budget_component_frame(
             vaccinated_simulation,
             evaluation_config,
@@ -1580,18 +1739,15 @@ def _build_copay_sheet_dataframe(search_dir: Path) -> tuple[int, pd.DataFrame]:
             merged[f"{scheme_code} Medical insurance fund expenditure"]
             - merged["No vaccination baseline fund"]
         )
+        ordered_columns.extend(
+            [
+                f"{scheme_code} Vaccination cost",
+                f"{scheme_code} Medical insurance fund expenditure",
+                f"{scheme_code} Medical insurance increment",
+            ]
+        )
 
-    ordered = merged[
-        [
-            "Year",
-            "3937 Vaccination cost",
-            "3937 Medical insurance fund expenditure",
-            "3937 Medical insurance increment",
-            "7428 Vaccination cost",
-            "7428 Medical insurance fund expenditure",
-            "7428 Medical insurance increment",
-        ]
-    ].copy()
+    ordered = merged[ordered_columns].copy()
     return years, ordered
 
 
@@ -1658,14 +1814,19 @@ def _build_budget_readme_dataframe() -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["Item", "Value"])
 
 
-def _build_copay_readme_dataframe() -> pd.DataFrame:
+def _build_copay_readme_dataframe(
+    person_shares: tuple[float, float] | list[float],
+) -> pd.DataFrame:
+    schemes = _build_copay_schemes(person_shares)
     rows = [
         ("Workbook purpose", "Co-payment impact analysis for optimal strategies"),
         ("Currency output", "RMB"),
         ("Unit", BUDGET_UNIT_LABEL),
         ("Base year", str(BUDGET_BEGIN_YEAR)),
-        ("Scheme 3937", "personal 60.63% / medical insurance 39.37%"),
-        ("Scheme 7428", "personal 25.72% / medical insurance 74.28%"),
+        *[
+            (f"Scheme {scheme_code}", _copay_scheme_title(scheme_code))
+            for scheme_code, _, _ in schemes
+        ],
         (
             "Vaccination cost meaning",
             "Medical-insurance-paid vaccination expenditure under each scheme",
@@ -1735,13 +1896,15 @@ def _write_budget_workbook(
 def _write_copay_workbook(
     output_dir: Path,
     sheet_payloads: list[tuple[int, pd.DataFrame]],
+    *,
+    person_shares: tuple[float, float] | list[float],
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     workbook_path = _copay_workbook_path(output_dir)
     with pd.ExcelWriter(workbook_path, engine="openpyxl") as writer:
         for years, dataframe in sheet_payloads:
             dataframe.to_excel(writer, sheet_name=f"{years}y", index=False)
-        _build_copay_readme_dataframe().to_excel(
+        _build_copay_readme_dataframe(person_shares).to_excel(
             writer,
             sheet_name="README",
             index=False,
@@ -2412,12 +2575,9 @@ def _empirical_price_demand_group_stats(
     return df, {float(index): int(value) for index, value in group_sizes.items()}
 
 
-def _prepare_weibull_price_demand_payloads(
+def _fit_weibull_price_demand(
     df: pd.DataFrame,
-    search_dirs: list[Path],
-    plot_terminal_price: float,
-    plot_doses: int,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+):
     try:
         from lifelines import WeibullAFTFitter
     except ImportError as exc:
@@ -2425,17 +2585,163 @@ def _prepare_weibull_price_demand_payloads(
             "lifelines is required to fit the Weibull price-demand curve"
         ) from exc
 
-    df = df.copy()
-    df["status"] = 1
-    threshold = np.quantile(df["income"], 0.95)
-    df["income_wo_outlier"] = np.minimum(df["income"], threshold)
-
+    fit_df = df.copy()
+    fit_df["status"] = 1
+    threshold = np.quantile(fit_df["income"], 0.95)
+    fit_df["income_wo_outlier"] = np.minimum(fit_df["income"], threshold)
     fitter = WeibullAFTFitter()
     fitter.fit(
-        df[["income_wo_outlier", "status", "WTP"]],
+        fit_df[["income_wo_outlier", "status", "WTP"]],
         duration_col="WTP",
         event_col="status",
     )
+    return fitter, threshold
+
+
+def _predict_weibull_price_demand(
+    df: pd.DataFrame,
+    *,
+    income: float,
+    price: float,
+) -> dict[str, object]:
+    fitter, threshold = _fit_weibull_price_demand(df)
+    capped_income = min(float(income), float(threshold))
+    demand = float(
+        fitter.predict_survival_function(
+            pd.DataFrame({"income_wo_outlier": [capped_income]}),
+            times=[price],
+        ).iloc[0, 0]
+    )
+    return {
+        "income": float(income),
+        "price": float(price),
+        "demand": demand,
+        "income_used_for_fit": capped_income,
+    }
+
+
+def _predict_weibull_price_from_demand(
+    df: pd.DataFrame,
+    *,
+    income: float,
+    demand: float,
+) -> dict[str, object]:
+    if not 0 < float(demand) <= 1:
+        raise ValueError("target demand for Weibull inversion must be within (0, 1]")
+    if float(demand) == 1.0:
+        return {
+            "income": float(income),
+            "price": 0.0,
+            "demand": float(demand),
+            "income_used_for_fit": float(income),
+        }
+
+    from scipy.optimize import brentq
+
+    fitter, threshold = _fit_weibull_price_demand(df)
+    capped_income = min(float(income), float(threshold))
+
+    def survival_at(price: float) -> float:
+        return float(
+            fitter.predict_survival_function(
+                pd.DataFrame({"income_wo_outlier": [capped_income]}),
+                times=[price],
+            ).iloc[0, 0]
+        )
+
+    upper = max(float(df["WTP"].max()), 1.0)
+    while survival_at(upper) > float(demand):
+        upper *= 2.0
+
+    price = float(brentq(lambda value: survival_at(value) - float(demand), 0.0, upper))
+    return {
+        "income": float(income),
+        "price": price,
+        "demand": float(demand),
+        "income_used_for_fit": capped_income,
+    }
+
+
+def _predict_empirical_price_demand(
+    df: pd.DataFrame,
+    *,
+    income: float,
+    price: float,
+) -> dict[str, object]:
+    grouped_df, group_sizes = _empirical_price_demand_group_stats(df)
+    income_group = pd.cut(
+        pd.Series([income], dtype=float),
+        bins=_price_demand_income_bin_edges(),
+        labels=PRICE_DEMAND_INCOME_LEVELS,
+        include_lowest=True,
+    ).astype(float)
+    representative_income = float(income_group.iloc[0])
+    group_wtp = grouped_df.loc[
+        grouped_df["income_group"] == representative_income,
+        "WTP",
+    ]
+    if group_wtp.empty:
+        raise ValueError(
+            "no empirical price-demand samples found for income group "
+            f"{representative_income}"
+        )
+    demand = float((group_wtp.to_numpy(dtype=float) >= price).mean())
+    return {
+        "income": float(income),
+        "price": float(price),
+        "demand": demand,
+        "income_group": representative_income,
+        "sample_size": group_sizes[representative_income],
+    }
+
+
+def _predict_empirical_price_from_demand(
+    df: pd.DataFrame,
+    *,
+    income: float,
+    demand: float,
+) -> dict[str, object]:
+    if not 0 < float(demand) <= 1:
+        raise ValueError("target demand for empirical inversion must be within (0, 1]")
+
+    grouped_df, group_sizes = _empirical_price_demand_group_stats(df)
+    income_group = pd.cut(
+        pd.Series([income], dtype=float),
+        bins=_price_demand_income_bin_edges(),
+        labels=PRICE_DEMAND_INCOME_LEVELS,
+        include_lowest=True,
+    ).astype(float)
+    representative_income = float(income_group.iloc[0])
+    group_wtp = grouped_df.loc[
+        grouped_df["income_group"] == representative_income,
+        "WTP",
+    ]
+    if group_wtp.empty:
+        raise ValueError(
+            "no empirical price-demand samples found for income group "
+            f"{representative_income}"
+        )
+
+    sorted_wtp = np.sort(group_wtp.to_numpy(dtype=float))
+    required_count = int(np.ceil(len(sorted_wtp) * float(demand)))
+    price = float(sorted_wtp[len(sorted_wtp) - required_count])
+    return {
+        "income": float(income),
+        "price": price,
+        "demand": float(demand),
+        "income_group": representative_income,
+        "sample_size": group_sizes[representative_income],
+        "price_definition": "maximum price with empirical demand >= target",
+    }
+
+
+def _prepare_weibull_price_demand_payloads(
+    df: pd.DataFrame,
+    search_dirs: list[Path],
+    plot_terminal_price: float,
+    plot_doses: int,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    fitter, _ = _fit_weibull_price_demand(df)
 
     price_grid = np.linspace(0.0, plot_terminal_price, 601)
     predictor = pd.DataFrame({"income_wo_outlier": PRICE_DEMAND_INCOME_LEVELS})
@@ -2814,20 +3120,27 @@ def _build_fig3(
 
     for index, (years, axis) in enumerate(zip(horizons, axes_c)):
         dataframe = copay_by_year[years]
+        scheme_meta = _copay_scheme_meta_from_dataframe(dataframe)
+        if len(scheme_meta) != 2:
+            raise ValueError(
+                f"fig3 expects exactly two co-payment schemes, got {scheme_meta}"
+            )
         x = dataframe["Year"].to_numpy()
+        first_code, first_title = scheme_meta[0]
+        second_code, second_title = scheme_meta[1]
         axis.plot(
             x,
-            dataframe["3937 Medical insurance increment"].to_numpy(),
+            dataframe[f"{first_code} Medical insurance increment"].to_numpy(),
             color="#2C7FB8",
             linewidth=1.8,
-            label="Medical insurance 39.37%",
+            label=first_title,
         )
         axis.plot(
             x,
-            dataframe["7428 Medical insurance increment"].to_numpy(),
+            dataframe[f"{second_code} Medical insurance increment"].to_numpy(),
             color="#F28E2B",
             linewidth=1.8,
-            label="Medical insurance 74.28%",
+            label=second_title,
         )
         axis.axhline(
             0.0,
@@ -3383,11 +3696,7 @@ def _build_figs5(
     vacc_color = "#2C7FB8"
     fund_color = "#D1495B"
     increment_color = "#2F855A"
-
-    scheme_meta = (
-        ("3937", "personal 60.63% / medical insurance 39.37%"),
-        ("7428", "personal 25.72% / medical insurance 74.28%"),
-    )
+    scheme_meta = _copay_scheme_meta_from_dataframe(copay_sheets[0][1])
 
     for row_index, (years, dataframe) in enumerate(copay_sheets):
         for col_index, (scheme_code, scheme_title) in enumerate(scheme_meta):
@@ -3694,6 +4003,78 @@ def _run_fig3(args: argparse.Namespace) -> None:
     print(f"Wrote {output_path}")
 
 
+def _run_price_demand(args: argparse.Namespace) -> None:
+    search_dirs = _discover_search_dirs(Path(args.results_root), args.results_glob)
+    df, metadata, message = _prepare_price_demand_source_data(
+        Path(args.price_demand_path),
+        search_dirs,
+        args.price_demand_column,
+        args.price_demand_query,
+        args.price_demand_doses,
+        args.price_demand_wtp_scale,
+    )
+    if df is None or metadata is None:
+        raise ValueError(message or "price-demand data could not be prepared")
+
+    if args.price is not None:
+        if args.price_demand_method == "empirical":
+            prediction = _predict_empirical_price_demand(
+                df,
+                income=float(args.income),
+                price=float(args.price),
+            )
+        else:
+            prediction = _predict_weibull_price_demand(
+                df,
+                income=float(args.income),
+                price=float(args.price),
+            )
+        payload = {
+            "method": args.price_demand_method,
+            "income": float(args.income),
+            "price": float(args.price),
+            "demand": float(prediction["demand"]),
+            "wtp_column": str(metadata["wtp_column"]),
+            "query": args.price_demand_query,
+            "plotted_doses": int(metadata["plot_doses"]),
+            "wtp_scale": float(metadata["wtp_scale"]),
+            "selected_price": float(metadata["selected_price"]),
+        }
+    else:
+        if args.price_demand_method == "empirical":
+            prediction = _predict_empirical_price_from_demand(
+                df,
+                income=float(args.income),
+                demand=float(args.demand),
+            )
+        else:
+            prediction = _predict_weibull_price_from_demand(
+                df,
+                income=float(args.income),
+                demand=float(args.demand),
+            )
+        payload = {
+            "method": args.price_demand_method,
+            "income": float(args.income),
+            "target_demand": float(args.demand),
+            "price": float(prediction["price"]),
+            "wtp_column": str(metadata["wtp_column"]),
+            "query": args.price_demand_query,
+            "plotted_doses": int(metadata["plot_doses"]),
+            "wtp_scale": float(metadata["wtp_scale"]),
+            "selected_price": float(metadata["selected_price"]),
+        }
+    for key in (
+        "income_group",
+        "sample_size",
+        "income_used_for_fit",
+        "price_definition",
+    ):
+        if key in prediction:
+            payload[key] = prediction[key]
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
 def _run_figs1(args: argparse.Namespace) -> None:
     search_results = _load_search_results(Path(args.results_root), args.results_glob)
     output_path = _build_figs1(Path(args.output_dir), search_results)
@@ -3769,9 +4150,17 @@ def _run_copay(args: argparse.Namespace) -> None:
     output_dir = Path(args.output_dir)
     search_dirs = _discover_search_dirs(Path(args.results_root), args.results_glob)
     sheet_payloads = [
-        _build_copay_sheet_dataframe(search_dir) for search_dir in search_dirs
+        _build_copay_sheet_dataframe(
+            search_dir,
+            person_shares=tuple(args.copay_person_shares),
+        )
+        for search_dir in search_dirs
     ]
-    workbook_path = _write_copay_workbook(output_dir, sheet_payloads)
+    workbook_path = _write_copay_workbook(
+        output_dir,
+        sheet_payloads,
+        person_shares=tuple(args.copay_person_shares),
+    )
     print(f"Wrote {workbook_path}")
 
 
@@ -3835,6 +4224,7 @@ def _run_all(args: argparse.Namespace) -> None:
         price_demand_query=args.price_demand_query,
         price_demand_doses=args.price_demand_doses,
         price_demand_wtp_scale=args.price_demand_wtp_scale,
+        copay_person_shares=tuple(args.copay_person_shares),
     )
 
     _run_tab1(shared)
@@ -3867,6 +4257,9 @@ def main() -> None:
         return
     if args.command == "fig3":
         _run_fig3(args)
+        return
+    if args.command == "price-demand":
+        _run_price_demand(args)
         return
     if args.command == "figs1":
         _run_figs1(args)
