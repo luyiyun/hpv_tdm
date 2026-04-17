@@ -319,6 +319,16 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     all_parser.add_argument(
+        "--price-demand-wtp-scale",
+        type=float,
+        default=1.0,
+        help=(
+            "Multiplier applied to WTP after converting the survey price to the "
+            "chosen plotting dose schedule. Used to reflect the gap between "
+            "stated willingness and actual behavior."
+        ),
+    )
+    all_parser.add_argument(
         "--sensitivity-path",
         default=None,
         help=(
@@ -488,6 +498,17 @@ def _parse_args() -> argparse.Namespace:
                     "after converting the survey price to a per-dose basis. "
                     "Defaults to the dose count used by the selected optimal "
                     "strategy."
+                ),
+            )
+            figure_parser.add_argument(
+                "--price-demand-wtp-scale",
+                type=float,
+                default=1.0,
+                help=(
+                    "Multiplier applied to WTP after converting the survey "
+                    "price to the chosen plotting dose schedule. Used to "
+                    "reflect the gap between stated willingness and actual "
+                    "behavior."
                 ),
             )
         if command_name == "figs5":
@@ -670,6 +691,8 @@ def _load_tab1_row(search_dir: Path) -> dict[str, object]:
             evaluation.avoid_cecx_deaths.sum(axis=1)[-1]
         ),
         "Averted DALYs": float(evaluation.avoid_daly[-1]),
+        "Vaccine cost (yuan)": float(evaluation.cost_vacc[-1]),
+        "Cervical cancer treatment cost (yuan)": float(evaluation.cost_cecx[-1]),
         "Total cost (yuan)": float(evaluation.total_cost[-1]),
     }
 
@@ -2320,6 +2343,7 @@ def _prepare_price_demand_source_data(
     price_demand_column: str | None,
     price_demand_query: str | None,
     price_demand_doses: int | None,
+    price_demand_wtp_scale: float,
 ) -> tuple[pd.DataFrame | None, dict[str, object] | None, str | None]:
     if not price_demand_path.exists():
         return (
@@ -2344,8 +2368,9 @@ def _prepare_price_demand_source_data(
     )
     df = df.query("income.notna() and WTP.notna() and WTP > 0").copy()
     plot_doses = _resolve_price_demand_plot_doses(search_dirs, price_demand_doses)
-    # 问卷中的价格口径是三针总价，这里先换算成单针价格，再按指定剂次映射回绘图口径。
-    df["WTP"] = (df["WTP"] / 3.0) * float(plot_doses)
+    # 问卷中的价格口径是三针总价，这里先换算成单针价格，
+    # 再按指定剂次和行为折减系数映射回绘图口径。
+    df["WTP"] = (df["WTP"] / 3.0) * float(plot_doses) * price_demand_wtp_scale
 
     selected_dose_price = _resolve_selected_dose_price(search_dirs)
     selected_price = selected_dose_price * float(plot_doses)
@@ -2359,6 +2384,7 @@ def _prepare_price_demand_source_data(
         "wtp_column": wtp_column,
         "query": price_demand_query,
         "plot_doses": plot_doses,
+        "wtp_scale": price_demand_wtp_scale,
         "selected_dose_price": selected_dose_price,
         "selected_price": selected_price,
         "max_observed_price": max_observed_price,
@@ -2464,9 +2490,7 @@ def _prepare_empirical_price_demand_payloads(
     price_grid = np.unique(
         np.r_[0.0, grouped_df["WTP"].to_numpy(dtype=float), plot_terminal_price]
     )
-    price_grid = price_grid[
-        (price_grid >= 0.0) & (price_grid <= plot_terminal_price)
-    ]
+    price_grid = price_grid[(price_grid >= 0.0) & (price_grid <= plot_terminal_price)]
 
     curve_rows: list[dict[str, object]] = []
     for income in PRICE_DEMAND_INCOME_LEVELS:
@@ -2537,7 +2561,7 @@ def _resolve_selected_dose_price(search_dirs: list[Path]) -> float:
         raise ValueError(
             "price-demand panel expects a single selected dose price across the "
             f"selected strategies, got: {sorted(prices)}"
-    )
+        )
     return next(iter(prices))
 
 
@@ -2600,6 +2624,7 @@ def _prepare_price_demand_payloads(
     price_demand_column: str | None,
     price_demand_query: str | None,
     price_demand_doses: int | None,
+    price_demand_wtp_scale: float,
 ) -> tuple[pd.DataFrame | None, pd.DataFrame | None, str | None]:
     df, metadata, message = _prepare_price_demand_source_data(
         price_demand_path,
@@ -2607,6 +2632,7 @@ def _prepare_price_demand_payloads(
         price_demand_column,
         price_demand_query,
         price_demand_doses,
+        price_demand_wtp_scale,
     )
     if df is None or metadata is None:
         return None, None, message
@@ -2637,9 +2663,11 @@ def _prepare_price_demand_payloads(
     curve_df["wtp_column"] = str(metadata["wtp_column"])
     curve_df["plotted_doses"] = int(metadata["plot_doses"])
     curve_df["query"] = "" if metadata["query"] is None else str(metadata["query"])
+    curve_df["wtp_scale"] = float(metadata["wtp_scale"])
     point_df["WTP column"] = str(metadata["wtp_column"])
     point_df["Plotted doses"] = int(metadata["plot_doses"])
     point_df["Query"] = "" if metadata["query"] is None else str(metadata["query"])
+    point_df["WTP scale"] = float(metadata["wtp_scale"])
     return curve_df, point_df, None
 
 
@@ -3639,6 +3667,7 @@ def _run_fig3(args: argparse.Namespace) -> None:
             args.price_demand_column,
             args.price_demand_query,
             args.price_demand_doses,
+            args.price_demand_wtp_scale,
         )
     )
     if price_demand_curve is not None and price_demand_points is not None:
@@ -3805,6 +3834,7 @@ def _run_all(args: argparse.Namespace) -> None:
         price_demand_column=args.price_demand_column,
         price_demand_query=args.price_demand_query,
         price_demand_doses=args.price_demand_doses,
+        price_demand_wtp_scale=args.price_demand_wtp_scale,
     )
 
     _run_tab1(shared)
