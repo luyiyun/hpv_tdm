@@ -19,8 +19,10 @@
     - `hr_16_18`
     - `hr_31_33_45_52_58`
     - `hr_other`
- - 当前第一版不显式建模共感染
- - 当前第一版不纳入 `6/11`
+  - 当前不纳入 `6/11`
+  - 当前不显式建模个体层面的共感染组合
+  - 共享真实女性/男性人口分母，并引入共享女性 persistent-risk pool `Pany`
+  - 在癌症事件层采用 competing-risk / single-cause attribution 近似
   - `SubtypeGrouped` 默认将亚型相关参数拆成：
     - 初始感染权重 `initial_weight`
     - 持续感染倍率 `persistence_multiplier`
@@ -46,8 +48,10 @@ uv sync --all-extras --dev
 常用命令：
 
 ```bash
+uv run find_params.py --model-config conf/simulate.json --params-config conf/find_params.json --output-dir results/find-params
 uv run simulate.py --model-config conf/simulate.json --evaluation-config conf/evaluation.json --output-dir results/example_simulation
 uv run search.py --model-config conf/simulate.json --evaluation-config conf/evaluation.json --search-config conf/search.json --time-horizon 60 --output-dir results/example_search
+uv run summary.py all --results-root results --output-dir summary
 uv run pytest
 uv run ruff check .
 uv run ruff format .
@@ -57,24 +61,39 @@ uv run ruff format .
 
 - `simulate.py`
   - 包外脚本入口
-  - 像普通使用者一样调用 `hpv_tdm` 的公开接口
+  - 负责读取 `ModelConfig` / `EvaluationConfig`
+  - 像普通使用者一样实例化 `Model`、`Evaluator` 并运行
 - `search.py`
   - 包外脚本入口
-  - 像普通使用者一样调用 `hpv_tdm` 的公开接口
+  - 负责读取 `ModelConfig` / `EvaluationConfig` / `SearchConfig`
+  - 像普通使用者一样实例化 `Model`、`Evaluator`、`Searcher` 并运行
+- `find_params.py`
+  - 包外脚本入口
+  - 通过长时程模拟 + Optuna 联合校准 subtype-grouped 模型中的初始状态与亚型参数
+  - 当前只支持 `subtype_grouped` 模型
+- `summary.py`
+  - 包外脚本入口
+  - 直接消费标准化结果文件，生成论文表格、主文图和补充分析输出
 - `src/hpv_tdm/config`
   - Pydantic 配置对象
+  - 公开入口收敛为 `AggregateModelConfig`、`SubtypeGroupedModelConfig`、`EvaluationConfig`、`SearchConfig`
 - `src/hpv_tdm/model`
-  - 传播动力学模型和内部人口学/接触矩阵组件
+  - 传播动力学模型实现
+  - 内含人口学、生命表和性接触矩阵的内部组件
 - `src/hpv_tdm/evaluator`
-  - 经济学评价逻辑
+  - `Evaluator`
+  - 只负责“如何计算评价指标”
 - `src/hpv_tdm/search`
-  - 贝叶斯优化搜索逻辑
+  - `Searcher`
+  - 只负责“如何做贝叶斯优化搜索”
 - `src/hpv_tdm/result`
   - 结果对象、汇总表格、绘图和 HDF5 读写
 - `experiments`
   - 基于标准化结果文件做论文图表和补充分析
 - `results`
-  - 仿真和搜索结果输出目录
+  - `simulate.py`、`search.py`、`find_params.py` 等脚本的结果输出目录
+- `summary`
+  - `summary.py` 默认输出目录
 
 ## 1. 直接做传播动力学模拟
 
@@ -260,9 +279,34 @@ JSON 合并规则固定为：
 
 ## 5. 脚本工作流
 
-虽然包本身没有再提供更高层的 `Scenario`/`service` 接口，但仓库仍保留两个研究脚本入口：
+虽然包本身没有再提供更高层的 `Scenario`/`service` 接口，但仓库仍保留完整的研究脚本工作流。对于 subtype 模型的正式分析，通常会按下面顺序组织：
 
-### 单次仿真
+1. 用 `find_params.py` 联合校准 subtype 模型的初始状态和亚型参数；
+2. 用 `simulate.py` 运行单个接种场景，并在需要时同时输出经济学评价；
+3. 用 `search.py` 在给定 horizon 下搜索最优接种策略；
+4. 用 `summary.py` 基于标准化结果文件生成论文表格、图和补充分析。
+
+### `find_params.py`：联合校准 subtype 参数与初始状态
+
+这个脚本面向 `subtype_grouped` 模型，通过长时程模拟 + Optuna 联合搜索以下参数：
+
+- `initial_infectious_ratio`
+- `subtype_groups.*.initial_weight`
+- `subtype_groups.*.persistence_multiplier`
+- `subtype_groups.*.cancer_progression_multiplier`
+
+当前目标函数同时考虑总宫颈癌发病率误差、感染亚型占比误差、癌症亚型占比误差和末期发病率趋势约束。脚本在生成候选参数时会显式忽略传入 `model-config` 中已有的 `simulation.init_state_path`，避免复用旧稳态文件污染校准结果。
+
+```bash
+uv run find_params.py \
+  --model-config conf/simulate.json \
+  --params-config conf/find_params.json \
+  --output-dir results/find-params
+```
+
+### `simulate.py`：单次仿真与可选评价
+
+这个脚本对应“根据某个接种策略做传播动力学模拟”。它会读取模型配置并运行一次仿真；如果同时提供 `--evaluation-config`，还会继续计算经济学评价。
 
 ```bash
 uv run simulate.py \
@@ -271,7 +315,9 @@ uv run simulate.py \
   --output-dir results/example_simulation
 ```
 
-### 策略搜索
+### `search.py`：最优接种策略搜索
+
+这个脚本对应“通过贝叶斯优化搜索最优接种策略”。它会读取模型、评价和搜索配置，调用 `Searcher` 进行多目标搜索。正式分析中通常会在不同 horizon 下分别运行，例如 30、40、50、60、80、100 年。
 
 ```bash
 uv run search.py \
@@ -282,7 +328,27 @@ uv run search.py \
   --output-dir results/example_search
 ```
 
-这两个脚本本质上只是包外示例工程，它们和普通使用者一样，只调用公开 API。
+### `summary.py`：基于标准化结果文件做汇总分析
+
+这个脚本直接消费 `results/` 下的标准化结果目录，生成论文表格、主文图、补充图，以及预算影响、共付和多方分担分析结果。常用子命令包括：
+
+- `tab1`
+- `tabs1`
+- `sensitivity`
+- `budget`
+- `copay`
+- `triparty`
+- `fig2`
+- `fig3`
+- `all`
+
+```bash
+uv run summary.py all \
+  --results-root results \
+  --output-dir summary
+```
+
+这些脚本本质上都只是包外工作流入口，它们和普通使用者一样，只调用 `hpv_tdm` 的公开 API。
 
 ## 6. 结果文件
 
@@ -294,17 +360,42 @@ uv run search.py \
 - `evaluation_config.json`
 - `last.npy`
 
+### 参数校准
+
+- `study.db`
+- `find_params_config.json`
+- `initial_state.npy`
+- `calibrated_model_config.json`
+- `model_config_with_init_state.json`
+- `calibration_simulation_result.h5`
+- `best_trial.json`
+- `summary.json`
+
 ### 搜索
 
 - `study.db`
 - `search_result.h5`
 - `best_simulation.h5`
 - `best_evaluation.h5`
-- `best_model_config.json`
 - `model_config.json`
 - `evaluation_config.json`
 - `search_config.json`
 - `best_trial.json`
+
+### 汇总分析
+
+`summary.py` 的输出会随子命令变化，常见文件包括：
+
+- `table1.xlsx` / `table1.csv` / `table1.md`
+- `table_s1.xlsx` / `table_s1.csv` / `table_s1.md`
+- `table_s3.xlsx` / `table_s3.csv` / `table_s3.md`
+- `sensitivity_s3.json` / `sensitivity_s3.csv`
+- `budget_impact.xlsx`
+- `copay_impact.xlsx`
+- `triparty_impact.xlsx`
+- `figure_2.png`
+- `figure_3.png`
+- `figure_s1.png` 到 `figure_s6.png`
 
 ## 7. 扩展方式
 

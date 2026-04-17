@@ -8,8 +8,13 @@ version = "0.1.0"
 description = "HPV transmission dynamics simulation and vaccination strategy search toolkit."
 readme = "README.md"
 requires-python = ">=3.10"
-authors = [{ name = "Rong Zhiwei", email = "rongzhiwei@bjmu.edu.cn" }]
-keywords = ["hpv", "vaccination", "transmission dynamics", "bayesian optimization"]
+authors = [{ name = "Rong Zhiwei", email = "rongzhiwei@tmu.edu.cn" }]
+keywords = [
+  "hpv",
+  "vaccination",
+  "transmission dynamics",
+  "bayesian optimization",
+]
 dependencies = [
   "cmaes>=0.11.1",
   "h5py>=3.11.0",
@@ -32,12 +37,7 @@ experiments = ["lifelines>=0.30.0"]
 where = ["src"]
 
 [dependency-groups]
-dev = [
-  "ipdb>=0.13.13",
-  "python-docx>=1.2.0",
-  "pytest>=8.3.0",
-  "ruff>=0.8.0",
-]
+dev = ["ipdb>=0.13.13", "python-docx>=1.2.0", "pytest>=8.3.0", "ruff>=0.8.0"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
