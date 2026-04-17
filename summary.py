@@ -147,7 +147,7 @@ def _parse_args() -> argparse.Namespace:
     )
     tabs1_parser.add_argument(
         "--model-config",
-        default="results/find_params_4/model_config_with_init_state.json",
+        default="results/find_params/model_config_with_init_state.json",
         help="Model configuration file used to derive Supplementary Table s1.",
     )
     tabs1_parser.add_argument(
@@ -234,6 +234,71 @@ def _parse_args() -> argparse.Namespace:
         "--output-dir",
         default="summary",
         help="Directory used to store the generated multi-party workbook.",
+    )
+
+    all_parser = subparsers.add_parser(
+        "all",
+        help="Run all summary subcommands in dependency-aware order.",
+    )
+    all_parser.add_argument(
+        "--results-glob",
+        default="search-*y",
+        help="Glob pattern under results/ used to discover scenario directories.",
+    )
+    all_parser.add_argument(
+        "--results-root",
+        default="results",
+        help="Root directory containing search result folders.",
+    )
+    all_parser.add_argument(
+        "--output-dir",
+        default="summary",
+        help="Directory used to store the generated summary files.",
+    )
+    all_parser.add_argument(
+        "--model-config",
+        default="results/find_params/model_config_with_init_state.json",
+        help="Model configuration file used to derive Supplementary Table s1.",
+    )
+    all_parser.add_argument(
+        "--price-demand-path",
+        default="data/price_demand_data.dta",
+        help=(
+            "Path to the Stata file used for the price-demand function. "
+            "When unavailable, panel A is rendered as a placeholder."
+        ),
+    )
+    all_parser.add_argument(
+        "--sensitivity-path",
+        default=None,
+        help=(
+            "Optional path to a precomputed sensitivity payload JSON file. "
+            "Defaults to <output-dir>/sensitivity_s3.json."
+        ),
+    )
+    all_parser.add_argument(
+        "--budget-path",
+        default=None,
+        help=(
+            "Optional path to the budget workbook. "
+            "Defaults to <output-dir>/budget_impact.xlsx."
+        ),
+    )
+    all_parser.add_argument(
+        "--copay-path",
+        default=None,
+        help=(
+            "Optional path to the co-payment workbook. "
+            "Defaults to <output-dir>/copay_impact.xlsx."
+        ),
+    )
+    all_parser.add_argument(
+        "--triparty-path",
+        default=None,
+        help=(
+            "Optional path to the multi-party workbook. "
+            "Defaults to <output-dir>/triparty_impact.xlsx."
+        ),
     )
 
     for command_name, help_text in (
@@ -686,12 +751,9 @@ def _build_fig2_scenario(search_dir: Path) -> Fig2Scenario:
         BUDGET_UNIT_DIVISOR
     )
     cost_saved = (
-        (
-            np.asarray(reference_absolute.cost_cecx, dtype=float)
-            - np.asarray(vaccinated_absolute.cost_cecx, dtype=float)
-        )
-        / BUDGET_UNIT_DIVISOR
-    )
+        np.asarray(reference_absolute.cost_cecx, dtype=float)
+        - np.asarray(vaccinated_absolute.cost_cecx, dtype=float)
+    ) / BUDGET_UNIT_DIVISOR
     net_cost = vaccine_cost - cost_saved
 
     return Fig2Scenario(
@@ -1253,9 +1315,7 @@ def _compute_triparty_component_frame(
         "Medical insurance - Vaccination cost": (
             cost_vacc_insurance / BUDGET_UNIT_DIVISOR
         ),
-        "Medical insurance - Total expenditure": (
-            cost_insurance / BUDGET_UNIT_DIVISOR
-        ),
+        "Medical insurance - Total expenditure": (cost_insurance / BUDGET_UNIT_DIVISOR),
         "Government": cost_vacc * gov_rate / BUDGET_UNIT_DIVISOR,
         "Individual": cost_vacc * person_rate / BUDGET_UNIT_DIVISOR,
     }
@@ -3189,6 +3249,56 @@ def _run_figs6(args: argparse.Namespace) -> None:
     print(f"Wrote {output_path}")
 
 
+def _run_all(args: argparse.Namespace) -> None:
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    sensitivity_path = _sensitivity_payload_path(args.sensitivity_path, output_dir)
+    budget_path = (
+        Path(args.budget_path)
+        if args.budget_path is not None
+        else (output_dir / "budget_impact.xlsx")
+    )
+    copay_path = (
+        Path(args.copay_path)
+        if args.copay_path is not None
+        else (output_dir / "copay_impact.xlsx")
+    )
+    triparty_path = (
+        Path(args.triparty_path)
+        if args.triparty_path is not None
+        else (output_dir / "triparty_impact.xlsx")
+    )
+
+    shared = argparse.Namespace(
+        results_glob=args.results_glob,
+        results_root=args.results_root,
+        output_dir=str(output_dir),
+        model_config=args.model_config,
+        sensitivity_path=str(sensitivity_path),
+        budget_path=str(budget_path),
+        copay_path=str(copay_path),
+        triparty_path=str(triparty_path),
+        price_demand_path=args.price_demand_path,
+    )
+
+    _run_tab1(shared)
+    _run_tabs1(shared)
+    _run_figs1(shared)
+    _run_figs2(shared)
+    _run_sensitivity(shared)
+    _run_tabs3(shared)
+    _run_figs3(shared)
+    _run_budget(shared)
+    _run_figs4(shared)
+    _run_copay(shared)
+    _run_figs5(shared)
+    _run_triparty(shared)
+    _run_figs6(shared)
+    _run_fig2(shared)
+    _run_fig3(shared)
+
+
 def main() -> None:
     args = _parse_args()
     if args.command == "tab1":
@@ -3235,6 +3345,9 @@ def main() -> None:
         return
     if args.command == "figs6":
         _run_figs6(args)
+        return
+    if args.command == "all":
+        _run_all(args)
         return
     raise ValueError(f"unsupported command: {args.command}")
 
