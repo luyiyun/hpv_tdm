@@ -38,6 +38,19 @@ COPAY_SCHEMES: tuple[tuple[str, float, float], ...] = (
 TRIPARTY_MEDICAL_INSURANCE = 0.2791
 TRIPARTY_GOVERNMENT = 0.2619
 TRIPARTY_INDIVIDUAL = 0.4590
+PRICE_DEMAND_INCOME_COLUMN = "家庭月平均收入元"
+PRICE_DEMAND_INCOME_LEVELS = np.array([1800, 6000, 9000, 11000, 18000, 23000, 35000])
+PRICE_DEMAND_WTP_COLUMNS: dict[str, tuple[str, ...]] = {
+    "domestic_bivalent": ("国产二价HPV疫苗愿意承受的最高价格是全程",),
+    "imported_bivalent": ("您可接受的二价疫苗最高价格是多少全程3针",),
+    "domestic_quadrivalent": ("国产四价HPV疫苗愿意承受的最高价格是全程",),
+    "imported_quadrivalent": ("您可接受的四价疫苗最高价格是多少全程3针",),
+    "domestic_nonavalent": (
+        "国产宫九价HPV疫苗愿意承受的最高价格是全程",
+        "国产九价HPV疫苗愿意承受的最高价格是全程",
+    ),
+    "imported_nonavalent": ("您可接受的九价疫苗最高价格是多少全程3针",),
+}
 
 
 @dataclass(frozen=True)
@@ -269,6 +282,43 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     all_parser.add_argument(
+        "--price-demand-method",
+        choices=("weibull", "empirical"),
+        default="weibull",
+        help=(
+            "Method used to build the price-demand panel: a Weibull AFT fit or "
+            "an empirical demand curve grouped by household income."
+        ),
+    )
+    all_parser.add_argument(
+        "--price-demand-column",
+        default=None,
+        help=(
+            "Optional explicit Stata column name used to build the price-demand "
+            "curve. When omitted, the script chooses a default column based on "
+            "the selected vaccine product."
+        ),
+    )
+    all_parser.add_argument(
+        "--price-demand-query",
+        default=None,
+        help=(
+            "Optional pandas query expression applied to the price-demand Stata "
+            "dataset before fitting or plotting. Defaults to using all samples."
+        ),
+    )
+    all_parser.add_argument(
+        "--price-demand-doses",
+        type=int,
+        choices=(2, 3),
+        default=None,
+        help=(
+            "Optional dose count used to rescale the price-demand curve after "
+            "converting the survey price to a per-dose basis. Defaults to the "
+            "dose count used by the selected optimal strategy."
+        ),
+    )
+    all_parser.add_argument(
         "--sensitivity-path",
         default=None,
         help=(
@@ -399,6 +449,45 @@ def _parse_args() -> argparse.Namespace:
                 help=(
                     "Path to the Stata file used for the price-demand function. "
                     "When unavailable, panel A is rendered as a placeholder."
+                ),
+            )
+            figure_parser.add_argument(
+                "--price-demand-method",
+                choices=("weibull", "empirical"),
+                default="weibull",
+                help=(
+                    "Method used to build the price-demand panel: a Weibull AFT "
+                    "fit or an empirical demand curve grouped by household income."
+                ),
+            )
+            figure_parser.add_argument(
+                "--price-demand-column",
+                default=None,
+                help=(
+                    "Optional explicit Stata column name used to build the "
+                    "price-demand curve. When omitted, the script chooses a "
+                    "default column based on the selected vaccine product."
+                ),
+            )
+            figure_parser.add_argument(
+                "--price-demand-query",
+                default=None,
+                help=(
+                    "Optional pandas query expression applied to the "
+                    "price-demand Stata dataset before fitting or plotting. "
+                    "Defaults to using all samples."
+                ),
+            )
+            figure_parser.add_argument(
+                "--price-demand-doses",
+                type=int,
+                choices=(2, 3),
+                default=None,
+                help=(
+                    "Optional dose count used to rescale the price-demand curve "
+                    "after converting the survey price to a per-dose basis. "
+                    "Defaults to the dose count used by the selected optimal "
+                    "strategy."
                 ),
             )
         if command_name == "figs5":
@@ -564,26 +653,16 @@ def _write_table_outputs(
 
 
 def _load_tab1_row(search_dir: Path) -> dict[str, object]:
-    with (search_dir / "best_trial.json").open("r", encoding="utf-8") as handle:
-        best_trial = json.load(handle)
-    with (search_dir / "model_config.json").open("r", encoding="utf-8") as handle:
-        model_config = json.load(handle)
-
+    strategy = _load_search_strategy_metadata(search_dir)
     evaluation = EvaluationResult.from_hdf(search_dir / "best_evaluation.h5")
 
-    years = _scenario_years_from_name(search_dir)
-    agebins = model_config["demography"]["agebins"]
-    target_product_id = best_trial["params"]["target_product_id"]
-    target_age_span = best_trial["params"]["target_age_span"]
-    coverage = float(best_trial["params"]["coverage"])
-
     return {
-        "Scenario": f"{years} Years",
-        "Time horizon (years)": years,
-        "Target age group": _age_span_label(target_age_span, agebins),
-        "Vaccine type": _product_label(target_product_id),
-        "Coverage": _format_percent(coverage),
-        "ICUR": float(best_trial["values"][0]),
+        "Scenario": strategy["scenario"],
+        "Time horizon (years)": strategy["years"],
+        "Target age group": strategy["target_age_group"],
+        "Vaccine type": strategy["vaccine_type"],
+        "Coverage": strategy["coverage"],
+        "ICUR": strategy["icur"],
         "Final incidence (/100k)": float(evaluation.incidence[-1] * 1e5),
         "Final mortality (/100k)": float(evaluation.mortality[-1] * 1e5),
         "Averted cervical cancer cases": float(evaluation.avoid_cecx.sum(axis=1)[-1]),
@@ -591,6 +670,7 @@ def _load_tab1_row(search_dir: Path) -> dict[str, object]:
             evaluation.avoid_cecx_deaths.sum(axis=1)[-1]
         ),
         "Averted DALYs": float(evaluation.avoid_daly[-1]),
+        "Total cost (yuan)": float(evaluation.total_cost[-1]),
     }
 
 
@@ -619,6 +699,76 @@ def _discover_search_dirs(results_root: Path, results_glob: str) -> list[Path]:
             f"{results_glob!r} under {results_root}"
         )
     return search_dirs
+
+
+def _load_search_strategy_metadata(search_dir: Path) -> dict[str, object]:
+    with (search_dir / "best_trial.json").open("r", encoding="utf-8") as handle:
+        best_trial = json.load(handle)
+    with (search_dir / "model_config.json").open("r", encoding="utf-8") as handle:
+        model_config = json.load(handle)
+
+    years = _scenario_years_from_name(search_dir)
+    agebins = model_config["demography"]["agebins"]
+    target_product_id = best_trial["params"]["target_product_id"]
+    target_age_span = best_trial["params"]["target_age_span"]
+    coverage = float(best_trial["params"]["coverage"])
+    product = model_config["vaccine_catalog"]["products"][target_product_id]
+
+    return {
+        "scenario": f"{years} Years",
+        "years": years,
+        "target_age_group": _age_span_label(target_age_span, agebins),
+        "target_age_span": target_age_span,
+        "vaccine_type": _product_label(target_product_id),
+        "product_id": target_product_id,
+        "coverage": _format_percent(coverage),
+        "icur": float(best_trial["values"][0]),
+        "dose_price": float(product["dose_cost"]),
+        "dose_count": _dose_count_for_age_span(product, agebins, target_age_span),
+        "full_course_price": _full_course_price(product, agebins, target_age_span),
+    }
+
+
+def _full_course_price(
+    product: dict[str, object], agebins: list[float], target_age_span: str
+) -> float:
+    return float(product["dose_cost"]) * float(
+        _dose_count_for_age_span(product, agebins, target_age_span)
+    )
+
+
+def _dose_count_for_age_span(
+    product: dict[str, object], agebins: list[float], target_age_span: str
+) -> int:
+    start_text, stop_text = target_age_span.split(":")
+    lower = agebins[int(start_text)]
+    upper = agebins[int(stop_text) + 1]
+    if not np.isfinite(upper):
+        raise ValueError(
+            f"target age span must have finite upper bound: {target_age_span}"
+        )
+
+    dose_counts = {
+        _dose_count_for_age(product["dose_schedules"], age)
+        for age in range(int(lower), int(upper))
+    }
+    if len(dose_counts) != 1:
+        raise ValueError(
+            "target age span crosses multiple dose schedules, cannot infer a single "
+            f"full-course price: {target_age_span}"
+        )
+    return int(dose_counts.pop())
+
+
+def _dose_count_for_age(dose_schedules: list[dict[str, object]], age: int) -> int:
+    matched_doses = [
+        int(rule["doses"])
+        for rule in dose_schedules
+        if int(rule["age_min"]) <= age <= int(rule["age_max"])
+    ]
+    if len(matched_doses) != 1:
+        raise ValueError(f"age {age} matched {len(matched_doses)} dose schedules")
+    return matched_doses[0]
 
 
 def _validate_sensitivity_dir(search_dir: Path) -> None:
@@ -2080,8 +2230,13 @@ def _build_fig2(
     return output_path
 
 
-def _plot_price_demand_panel(ax: plt.Axes, price_demand_path: Path) -> None:
-    income_levels = np.array([1800, 6000, 9000, 11000, 18000, 23000, 35000])
+def _plot_price_demand_panel(
+    ax: plt.Axes,
+    curve_df: pd.DataFrame | None,
+    method: str,
+    selected_price: float | None,
+    missing_message: str | None = None,
+) -> None:
     colors = [
         "#3C3C3C",
         "#F28E2B",
@@ -2092,55 +2247,159 @@ def _plot_price_demand_panel(ax: plt.Axes, price_demand_path: Path) -> None:
         "#8C7A6B",
     ]
 
-    if not price_demand_path.exists():
+    if curve_df is None:
         ax.text(
             0.5,
             0.52,
+            missing_message
+            or (
+                "price-demand curve data not available yet.\n"
+                "Panel A will be rendered automatically\n"
+                "once the required inputs are provided."
+            ),
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            fontsize=10,
+            color="#555555",
+        )
+        ax.set_xlabel("Vaccine price (yuan)", fontsize=10)
+        ax.set_ylabel("Vaccine demand", fontsize=10)
+        ax.set_xlim(0, 3000)
+        ax.set_ylim(0, 1.02)
+        apply_nature_style(ax.figure, ax)
+        return
+
+    for income, color in zip(PRICE_DEMAND_INCOME_LEVELS, colors):
+        income_curve = curve_df.loc[curve_df["income"] == income]
+        if method == "empirical":
+            ax.step(
+                income_curve["price"].to_numpy(),
+                income_curve["demand"].to_numpy(),
+                where="post",
+                color=color,
+                linewidth=1.8,
+                label=f"Income = {income:.0f}",
+            )
+        else:
+            ax.plot(
+                income_curve["price"].to_numpy(),
+                income_curve["demand"].to_numpy(),
+                color=color,
+                linewidth=1.8,
+                label=f"Income = {income:.0f}",
+            )
+    ax.set_xlabel("Vaccine price (yuan)", fontsize=10)
+    ax.set_ylabel("Vaccine demand", fontsize=10)
+    ax.set_xlim(0, float(curve_df["price"].max()))
+    ax.set_ylim(0, 1.02)
+    if selected_price is not None:
+        ax.axvline(
+            selected_price,
+            color="black",
+            linestyle="--",
+            linewidth=1.3,
+        )
+    ax.legend(
+        loc="upper right",
+        frameon=False,
+        fontsize=8.5,
+        ncol=1,
+    )
+    apply_nature_style(ax.figure, ax)
+
+
+def _price_demand_income_bin_edges() -> np.ndarray:
+    midpoints = (PRICE_DEMAND_INCOME_LEVELS[:-1] + PRICE_DEMAND_INCOME_LEVELS[1:]) / 2
+    return np.r_[-np.inf, midpoints, np.inf]
+
+
+def _prepare_price_demand_source_data(
+    price_demand_path: Path,
+    search_dirs: list[Path],
+    price_demand_column: str | None,
+    price_demand_query: str | None,
+    price_demand_doses: int | None,
+) -> tuple[pd.DataFrame | None, dict[str, object] | None, str | None]:
+    if not price_demand_path.exists():
+        return (
+            None,
+            None,
             "price_demand_data.dta not available yet.\n"
             "Panel A will be rendered automatically\n"
             "once the data file is provided.",
-            transform=ax.transAxes,
-            ha="center",
-            va="center",
-            fontsize=10,
-            color="#555555",
         )
-        ax.set_xlabel("Vaccine price (yuan)", fontsize=10)
-        ax.set_ylabel("Vaccine demand", fontsize=10)
-        ax.set_xlim(0, 3000)
-        ax.set_ylim(0, 1.02)
-        apply_nature_style(ax.figure, ax)
-        return
 
+    product_id = _resolve_price_demand_product_id(search_dirs)
+    raw_df = pd.read_stata(price_demand_path)
+    if price_demand_query is not None:
+        raw_df = raw_df.query(price_demand_query).copy()
+    wtp_column = _resolve_price_demand_column(
+        raw_df.columns,
+        product_id,
+        price_demand_column,
+    )
+    df = raw_df[[PRICE_DEMAND_INCOME_COLUMN, wtp_column]].rename(
+        columns={PRICE_DEMAND_INCOME_COLUMN: "income", wtp_column: "WTP"}
+    )
+    df = df.query("income.notna() and WTP.notna() and WTP > 0").copy()
+    plot_doses = _resolve_price_demand_plot_doses(search_dirs, price_demand_doses)
+    # 问卷中的价格口径是三针总价，这里先换算成单针价格，再按指定剂次映射回绘图口径。
+    df["WTP"] = (df["WTP"] / 3.0) * float(plot_doses)
+
+    selected_dose_price = _resolve_selected_dose_price(search_dirs)
+    selected_price = selected_dose_price * float(plot_doses)
+    max_observed_price = float(df["WTP"].max())
+    plot_terminal_price = max(
+        selected_price,
+        max_observed_price + max(1.0, max_observed_price * 0.02),
+    )
+    metadata = {
+        "product_id": product_id,
+        "wtp_column": wtp_column,
+        "query": price_demand_query,
+        "plot_doses": plot_doses,
+        "selected_dose_price": selected_dose_price,
+        "selected_price": selected_price,
+        "max_observed_price": max_observed_price,
+        "plot_terminal_price": plot_terminal_price,
+    }
+    return df, metadata, None
+
+
+def _empirical_price_demand_group_stats(
+    df: pd.DataFrame,
+) -> tuple[pd.DataFrame, dict[float, int]]:
+    df = df.copy()
+    df["income"] = pd.to_numeric(df["income"], errors="coerce")
+    df["income_group"] = pd.cut(
+        df["income"],
+        bins=_price_demand_income_bin_edges(),
+        labels=PRICE_DEMAND_INCOME_LEVELS,
+        include_lowest=True,
+    ).astype(float)
+    group_sizes = (
+        df.groupby("income_group", observed=False)
+        .size()
+        .reindex(PRICE_DEMAND_INCOME_LEVELS, fill_value=0)
+    )
+    return df, {float(index): int(value) for index, value in group_sizes.items()}
+
+
+def _prepare_weibull_price_demand_payloads(
+    df: pd.DataFrame,
+    search_dirs: list[Path],
+    plot_terminal_price: float,
+    plot_doses: int,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     try:
         from lifelines import WeibullAFTFitter
-    except ImportError:
-        ax.text(
-            0.5,
-            0.52,
-            "lifelines is required to fit the price-demand curve.\n"
-            "Install it or provide a precomputed panel.",
-            transform=ax.transAxes,
-            ha="center",
-            va="center",
-            fontsize=10,
-            color="#555555",
-        )
-        ax.set_xlabel("Vaccine price (yuan)", fontsize=10)
-        ax.set_ylabel("Vaccine demand", fontsize=10)
-        ax.set_xlim(0, 3000)
-        ax.set_ylim(0, 1.02)
-        apply_nature_style(ax.figure, ax)
-        return
+    except ImportError as exc:
+        raise ImportError(
+            "lifelines is required to fit the Weibull price-demand curve"
+        ) from exc
 
-    df = pd.read_stata(price_demand_path)
-    df = df[["家庭月平均收入元", "国产二价HPV疫苗愿意承受的最高价格是全程"]].rename(
-        columns={
-            "家庭月平均收入元": "income",
-            "国产二价HPV疫苗愿意承受的最高价格是全程": "WTP",
-        }
-    )
-    df = df.query("WTP > 0").copy()
+    df = df.copy()
     df["status"] = 1
     threshold = np.quantile(df["income"], 0.95)
     df["income_wo_outlier"] = np.minimum(df["income"], threshold)
@@ -2152,36 +2411,253 @@ def _plot_price_demand_panel(ax: plt.Axes, price_demand_path: Path) -> None:
         event_col="status",
     )
 
-    preds = []
-    for percentile in np.arange(0.01, 1.0, 0.01):
-        pred = fitter.predict_percentile(
-            pd.DataFrame({"income_wo_outlier": income_levels}),
-            p=percentile,
-        )
-        preds.append(pred)
-    pred_df = pd.concat(preds, axis=1)
-    pred_df.columns = np.arange(0.01, 1.0, 0.01)
-    pred_df.index = income_levels
-    pred_df = pred_df.T
-
-    for income, color in zip(pred_df.columns, colors):
-        ax.plot(
-            pred_df[income].values,
-            pred_df.index.values,
-            color=color,
-            linewidth=1.8,
-            label=f"Income = {income:.0f}",
-        )
-    ax.set_xlabel("Vaccine price (yuan)", fontsize=10)
-    ax.set_ylabel("Vaccine demand", fontsize=10)
-    ax.set_ylim(0, 1.02)
-    ax.legend(
-        loc="upper right",
-        frameon=False,
-        fontsize=8.5,
-        ncol=1,
+    price_grid = np.linspace(0.0, plot_terminal_price, 601)
+    predictor = pd.DataFrame({"income_wo_outlier": PRICE_DEMAND_INCOME_LEVELS})
+    survival = fitter.predict_survival_function(predictor, times=price_grid)
+    survival.columns = PRICE_DEMAND_INCOME_LEVELS
+    curve_df = (
+        survival.rename_axis("price")
+        .reset_index()
+        .melt(id_vars="price", var_name="income", value_name="demand")
+        .sort_values(["income", "price"], ignore_index=True)
     )
-    apply_nature_style(ax.figure, ax)
+    curve_df["income"] = curve_df["income"].astype(float)
+    curve_df["method"] = "weibull"
+
+    point_rows: list[dict[str, object]] = []
+    for search_dir in search_dirs:
+        strategy = _load_search_strategy_metadata(search_dir)
+        price = float(strategy["dose_price"]) * float(plot_doses)
+        demand = fitter.predict_survival_function(
+            predictor,
+            times=[price],
+        ).iloc[0]
+        for income, income_demand in zip(
+            PRICE_DEMAND_INCOME_LEVELS,
+            demand,
+            strict=True,
+        ):
+            point_rows.append(
+                {
+                    "Method": "weibull",
+                    "Scenario": strategy["scenario"],
+                    "Time horizon (years)": strategy["years"],
+                    "Target age group": strategy["target_age_group"],
+                    "Vaccine type": strategy["vaccine_type"],
+                    "Plotted doses": plot_doses,
+                    "Selected plotted price (yuan)": price,
+                    "Household monthly income (yuan)": float(income),
+                    "Demand": float(income_demand),
+                }
+            )
+    point_df = pd.DataFrame.from_records(point_rows)
+    return curve_df, point_df
+
+
+def _prepare_empirical_price_demand_payloads(
+    df: pd.DataFrame,
+    search_dirs: list[Path],
+    plot_terminal_price: float,
+    plot_doses: int,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    grouped_df, group_sizes = _empirical_price_demand_group_stats(df)
+    price_grid = np.unique(
+        np.r_[0.0, grouped_df["WTP"].to_numpy(dtype=float), plot_terminal_price]
+    )
+    price_grid = price_grid[
+        (price_grid >= 0.0) & (price_grid <= plot_terminal_price)
+    ]
+
+    curve_rows: list[dict[str, object]] = []
+    for income in PRICE_DEMAND_INCOME_LEVELS:
+        income_group = grouped_df.loc[grouped_df["income_group"] == income, "WTP"]
+        if income_group.empty:
+            continue
+        wtp_values = income_group.to_numpy(dtype=float)
+        demand_values = np.array([(wtp_values >= price).mean() for price in price_grid])
+        for price, demand in zip(price_grid, demand_values, strict=True):
+            curve_rows.append(
+                {
+                    "method": "empirical",
+                    "income": float(income),
+                    "price": float(price),
+                    "demand": float(demand),
+                    "plotted_doses": plot_doses,
+                    "sample_size": group_sizes[float(income)],
+                }
+            )
+    curve_df = pd.DataFrame.from_records(curve_rows)
+
+    point_rows: list[dict[str, object]] = []
+    for search_dir in search_dirs:
+        strategy = _load_search_strategy_metadata(search_dir)
+        price = float(strategy["dose_price"]) * float(plot_doses)
+        for income in PRICE_DEMAND_INCOME_LEVELS:
+            income_group = grouped_df.loc[grouped_df["income_group"] == income, "WTP"]
+            if income_group.empty:
+                continue
+            demand = float((income_group.to_numpy(dtype=float) >= price).mean())
+            point_rows.append(
+                {
+                    "Method": "empirical",
+                    "Scenario": strategy["scenario"],
+                    "Time horizon (years)": strategy["years"],
+                    "Target age group": strategy["target_age_group"],
+                    "Vaccine type": strategy["vaccine_type"],
+                    "Plotted doses": plot_doses,
+                    "Selected plotted price (yuan)": price,
+                    "Household monthly income (yuan)": float(income),
+                    "Demand": demand,
+                    "Sample size": group_sizes[float(income)],
+                }
+            )
+    point_df = pd.DataFrame.from_records(point_rows)
+    return curve_df, point_df
+
+
+def _resolve_price_demand_product_id(search_dirs: list[Path]) -> str:
+    product_ids = {
+        str(_load_search_strategy_metadata(search_dir)["product_id"])
+        for search_dir in search_dirs
+    }
+    if len(product_ids) != 1:
+        raise ValueError(
+            "price-demand analysis expects a single vaccine product across the "
+            f"selected strategies, got: {sorted(product_ids)}"
+        )
+    return next(iter(product_ids))
+
+
+def _resolve_selected_dose_price(search_dirs: list[Path]) -> float:
+    prices = {
+        float(_load_search_strategy_metadata(search_dir)["dose_price"])
+        for search_dir in search_dirs
+    }
+    if len(prices) != 1:
+        raise ValueError(
+            "price-demand panel expects a single selected dose price across the "
+            f"selected strategies, got: {sorted(prices)}"
+    )
+    return next(iter(prices))
+
+
+def _resolve_selected_dose_count(search_dirs: list[Path]) -> int:
+    dose_counts = {
+        int(_load_search_strategy_metadata(search_dir)["dose_count"])
+        for search_dir in search_dirs
+    }
+    if len(dose_counts) != 1:
+        raise ValueError(
+            "price-demand panel expects a single dose count across the selected "
+            f"strategies, got: {sorted(dose_counts)}"
+        )
+    return next(iter(dose_counts))
+
+
+def _resolve_price_demand_plot_doses(
+    search_dirs: list[Path],
+    explicit_doses: int | None,
+) -> int:
+    if explicit_doses is not None:
+        return explicit_doses
+    return _resolve_selected_dose_count(search_dirs)
+
+
+def _resolve_price_demand_wtp_column(columns: pd.Index, product_id: str) -> str:
+    candidates = PRICE_DEMAND_WTP_COLUMNS.get(product_id)
+    if candidates is None:
+        raise ValueError(
+            f"no price-demand WTP column mapping configured for product {product_id!r}"
+        )
+    for candidate in candidates:
+        if candidate in columns:
+            return candidate
+    raise ValueError(
+        f"none of the candidate WTP columns for product {product_id!r} were found: "
+        f"{list(candidates)}"
+    )
+
+
+def _resolve_price_demand_column(
+    columns: pd.Index,
+    product_id: str,
+    explicit_column: str | None,
+) -> str:
+    if explicit_column is not None:
+        if explicit_column not in columns:
+            raise ValueError(
+                f"requested price-demand column not found in Stata file: "
+                f"{explicit_column!r}"
+            )
+        return explicit_column
+    return _resolve_price_demand_wtp_column(columns, product_id)
+
+
+def _prepare_price_demand_payloads(
+    price_demand_path: Path,
+    search_dirs: list[Path],
+    method: str,
+    price_demand_column: str | None,
+    price_demand_query: str | None,
+    price_demand_doses: int | None,
+) -> tuple[pd.DataFrame | None, pd.DataFrame | None, str | None]:
+    df, metadata, message = _prepare_price_demand_source_data(
+        price_demand_path,
+        search_dirs,
+        price_demand_column,
+        price_demand_query,
+        price_demand_doses,
+    )
+    if df is None or metadata is None:
+        return None, None, message
+
+    try:
+        if method == "empirical":
+            curve_df, point_df = _prepare_empirical_price_demand_payloads(
+                df,
+                search_dirs,
+                float(metadata["plot_terminal_price"]),
+                int(metadata["plot_doses"]),
+            )
+        else:
+            curve_df, point_df = _prepare_weibull_price_demand_payloads(
+                df,
+                search_dirs,
+                float(metadata["plot_terminal_price"]),
+                int(metadata["plot_doses"]),
+            )
+    except ImportError:
+        return (
+            None,
+            None,
+            "lifelines is required to fit the Weibull price-demand curve.\n"
+            "Install it or switch to --price-demand-method empirical.",
+        )
+
+    curve_df["wtp_column"] = str(metadata["wtp_column"])
+    curve_df["plotted_doses"] = int(metadata["plot_doses"])
+    curve_df["query"] = "" if metadata["query"] is None else str(metadata["query"])
+    point_df["WTP column"] = str(metadata["wtp_column"])
+    point_df["Plotted doses"] = int(metadata["plot_doses"])
+    point_df["Query"] = "" if metadata["query"] is None else str(metadata["query"])
+    return curve_df, point_df, None
+
+
+def _write_price_demand_outputs(
+    output_dir: Path,
+    curve_df: pd.DataFrame,
+    point_df: pd.DataFrame,
+    method: str,
+    plot_doses: int,
+) -> tuple[Path, Path]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    curve_path = output_dir / f"price_demand_curve_{method}_{plot_doses}dose.csv"
+    point_path = (
+        output_dir / f"price_demand_optimal_strategies_{method}_{plot_doses}dose.csv"
+    )
+    curve_df.to_csv(curve_path, index=False)
+    point_df.to_csv(point_path, index=False)
+    return curve_path, point_path
 
 
 def _build_fig3(
@@ -2189,7 +2665,11 @@ def _build_fig3(
     budget_sheets: list[tuple[int, pd.DataFrame]],
     copay_sheets: list[tuple[int, pd.DataFrame]],
     triparty_sheets: list[tuple[int, pd.DataFrame]],
-    price_demand_path: Path,
+    price_demand_curve: pd.DataFrame | None,
+    price_demand_method: str,
+    plot_doses: int,
+    selected_price: float | None,
+    price_demand_message: str | None,
 ) -> Path:
     budget_by_year = dict(budget_sheets)
     copay_by_year = dict(copay_sheets)
@@ -2205,7 +2685,7 @@ def _build_fig3(
     outer = fig.add_gridspec(
         4,
         1,
-        height_ratios=[1.15, 2.35, 2.25, 2.25],
+        height_ratios=[1.45, 2.25, 2.15, 2.15],
         hspace=0.32,
     )
     ax_a = fig.add_subplot(outer[0])
@@ -2223,7 +2703,13 @@ def _build_fig3(
         [fig.add_subplot(grid_d[index // 3, index % 3]) for index in range(6)]
     )
 
-    _plot_price_demand_panel(ax_a, price_demand_path)
+    _plot_price_demand_panel(
+        ax_a,
+        price_demand_curve,
+        price_demand_method,
+        selected_price,
+        price_demand_message,
+    )
     ax_a.text(
         -0.05,
         1.04,
@@ -2427,8 +2913,13 @@ def _build_fig3(
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "figure_3.png"
     fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    method_output_path = (
+        output_dir / f"figure_3_{price_demand_method}_{plot_doses}dose.png"
+    )
+    if method_output_path != output_path:
+        fig.savefig(method_output_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
-    return output_path
+    return method_output_path
 
 
 def _build_figs1(
@@ -3131,15 +3622,45 @@ def _run_fig2(args: argparse.Namespace) -> None:
 
 def _run_fig3(args: argparse.Namespace) -> None:
     output_dir = Path(args.output_dir)
+    search_dirs = _discover_search_dirs(Path(args.results_root), args.results_glob)
+    plotted_doses = _resolve_price_demand_plot_doses(
+        search_dirs,
+        args.price_demand_doses,
+    )
+    selected_price = _resolve_selected_dose_price(search_dirs) * float(plotted_doses)
     budget_sheets = _load_budget_sheets(Path(args.budget_path))
     copay_sheets = _load_copay_sheets(Path(args.copay_path))
     triparty_sheets = _load_triparty_sheets(Path(args.triparty_path))
+    price_demand_curve, price_demand_points, price_demand_message = (
+        _prepare_price_demand_payloads(
+            Path(args.price_demand_path),
+            search_dirs,
+            args.price_demand_method,
+            args.price_demand_column,
+            args.price_demand_query,
+            args.price_demand_doses,
+        )
+    )
+    if price_demand_curve is not None and price_demand_points is not None:
+        curve_path, point_path = _write_price_demand_outputs(
+            output_dir,
+            price_demand_curve,
+            price_demand_points,
+            args.price_demand_method,
+            plotted_doses,
+        )
+        print(f"Wrote {curve_path}")
+        print(f"Wrote {point_path}")
     output_path = _build_fig3(
         output_dir,
         budget_sheets,
         copay_sheets,
         triparty_sheets,
-        Path(args.price_demand_path),
+        price_demand_curve,
+        args.price_demand_method,
+        plotted_doses,
+        selected_price,
+        price_demand_message,
     )
     print(f"Wrote {output_path}")
 
@@ -3280,6 +3801,10 @@ def _run_all(args: argparse.Namespace) -> None:
         copay_path=str(copay_path),
         triparty_path=str(triparty_path),
         price_demand_path=args.price_demand_path,
+        price_demand_method=args.price_demand_method,
+        price_demand_column=args.price_demand_column,
+        price_demand_query=args.price_demand_query,
+        price_demand_doses=args.price_demand_doses,
     )
 
     _run_tab1(shared)
