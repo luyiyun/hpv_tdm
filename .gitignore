@@ -16,6 +16,8 @@ build/
 paper/src_/
 summary/
 scripts/
+docs/
+experiments/
 .venv/
 .ruff_cache/
 .pytest_cache/
