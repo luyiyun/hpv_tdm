@@ -53,7 +53,7 @@ PRICE_DEMAND_WTP_COLUMNS: dict[str, tuple[str, ...]] = {
     ),
     "imported_nonavalent": ("您可接受的九价疫苗最高价格是多少全程3针",),
 }
-IMAGE_FORMAT_CHOICES: tuple[str, ...] = ("png", "pdf", "tiff")
+IMAGE_FORMAT_CHOICES: tuple[str, ...] = ("png", "pdf", "tiff", "jpeg")
 
 
 @dataclass(frozen=True)
@@ -712,7 +712,7 @@ def _save_figure(
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = _figure_output_path(output_dir, stem, image_format)
     save_kwargs: dict[str, object] = {"bbox_inches": "tight"}
-    if image_format in {"png", "tiff"}:
+    if image_format in {"png", "tiff", "jpeg"}:
         save_kwargs["dpi"] = 300
     fig.savefig(output_path, **save_kwargs)
     return output_path
@@ -3317,7 +3317,7 @@ def _build_fig3(
     )
     if method_output_path != output_path:
         save_kwargs: dict[str, object] = {"bbox_inches": "tight"}
-        if image_format in {"png", "tiff"}:
+        if image_format in {"png", "tiff", "jpeg"}:
             save_kwargs["dpi"] = 300
         fig.savefig(method_output_path, **save_kwargs)
     plt.close(fig)
