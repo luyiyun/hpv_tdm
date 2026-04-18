@@ -53,6 +53,7 @@ PRICE_DEMAND_WTP_COLUMNS: dict[str, tuple[str, ...]] = {
     ),
     "imported_nonavalent": ("您可接受的九价疫苗最高价格是多少全程3针",),
 }
+IMAGE_FORMAT_CHOICES: tuple[str, ...] = ("png", "pdf", "tiff")
 
 
 @dataclass(frozen=True)
@@ -366,6 +367,12 @@ def _parse_args() -> argparse.Namespace:
         help="Directory used to store the generated summary files.",
     )
     all_parser.add_argument(
+        "--image-format",
+        choices=IMAGE_FORMAT_CHOICES,
+        default="png",
+        help="Image format used for generated figures.",
+    )
+    all_parser.add_argument(
         "--model-config",
         default="results/find_params/model_config_with_init_state.json",
         help="Model configuration file used to derive Supplementary Table s1.",
@@ -530,6 +537,12 @@ def _parse_args() -> argparse.Namespace:
             default="summary",
             help="Directory used to store the generated summary files.",
         )
+        figure_parser.add_argument(
+            "--image-format",
+            choices=IMAGE_FORMAT_CHOICES,
+            default="png",
+            help="Image format used for generated figures.",
+        )
         if command_name in {"tabs3", "figs3"}:
             figure_parser.add_argument(
                 "--sensitivity-path",
@@ -684,6 +697,25 @@ def _adjust_excel_widths(path: Path) -> None:
             max(width, 12), 36
         )
     workbook.save(path)
+
+
+def _figure_output_path(output_dir: Path, stem: str, image_format: str) -> Path:
+    return output_dir / f"{stem}.{image_format}"
+
+
+def _save_figure(
+    fig: plt.Figure,
+    output_dir: Path,
+    stem: str,
+    image_format: str,
+) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = _figure_output_path(output_dir, stem, image_format)
+    save_kwargs: dict[str, object] = {"bbox_inches": "tight"}
+    if image_format in {"png", "tiff"}:
+        save_kwargs["dpi"] = 300
+    fig.savefig(output_path, **save_kwargs)
+    return output_path
 
 
 def _load_model_config(path: Path) -> AggregateModelConfig | SubtypeGroupedModelConfig:
@@ -2086,6 +2118,7 @@ def _format_heatmap_axis(
 def _build_fig2(
     output_dir: Path,
     scenarios: list[Fig2Scenario],
+    image_format: str,
 ) -> Path:
     incidence_stack = np.concatenate(
         [scenario.incidence_reduction.ravel() for scenario in scenarios]
@@ -2133,6 +2166,9 @@ def _build_fig2(
     axes_d = np.array([fig.add_subplot(grid_d[0, index]) for index in range(3)])
     axes_e = np.array([fig.add_subplot(grid_e[0, index]) for index in range(3)])
 
+    def _scenario_title(years: int, scenario_index: int) -> str:
+        return f"{years}-year horizon (scenario {scenario_index})"
+
     heatmap_a = None
     heatmap_b = None
     for index, (scenario, axis) in enumerate(zip(scenarios, axes_a)):
@@ -2146,7 +2182,11 @@ def _build_fig2(
             vmax=incidence_vmax,
             interpolation="nearest",
         )
-        axis.set_title(f"{scenario.years}-year horizon", fontsize=9.5, pad=4)
+        axis.set_title(
+            _scenario_title(scenario.years, index + 1),
+            fontsize=9.5,
+            pad=4,
+        )
         if index == 0:
             axis.text(
                 -0.24,
@@ -2177,7 +2217,11 @@ def _build_fig2(
             vmax=mortality_vmax,
             interpolation="nearest",
         )
-        axis.set_title(f"{scenario.years}-year horizon", fontsize=9.5, pad=4)
+        axis.set_title(
+            _scenario_title(scenario.years, index + 1),
+            fontsize=9.5,
+            pad=4,
+        )
         if index == 0:
             axis.text(
                 -0.24,
@@ -2409,9 +2453,7 @@ def _build_fig2(
         fontsize=11,
     )
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "figure_2.png"
-    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    output_path = _save_figure(fig, output_dir, "figure_2", image_format)
     plt.close(fig)
     return output_path
 
@@ -3004,6 +3046,7 @@ def _build_fig3(
     plot_doses: int,
     selected_price: float | None,
     price_demand_message: str | None,
+    image_format: str,
 ) -> Path:
     budget_by_year = dict(budget_sheets)
     copay_by_year = dict(copay_sheets)
@@ -3060,6 +3103,9 @@ def _build_fig3(
         pad=4,
     )
 
+    def _scenario_title(years: int, scenario_index: int) -> str:
+        return f"{years}-year horizon (scenario {scenario_index})"
+
     for index, (years, axis) in enumerate(zip(horizons, axes_b)):
         dataframe = budget_by_year[years]
         x = dataframe["Year"].to_numpy()
@@ -3069,7 +3115,7 @@ def _build_fig3(
             color="#2C7FB8",
             linestyle="--",
             linewidth=1.4,
-            label="Treatment fund - no vaccination",
+            label="Treatment fund / Total fund - no vaccination",
         )
         axis.plot(
             x,
@@ -3081,21 +3127,20 @@ def _build_fig3(
         )
         axis.plot(
             x,
-            dataframe["Total fund - No vaccination"].to_numpy(),
-            color="#D1495B",
-            linestyle="--",
-            linewidth=1.4,
-            label="Total fund - no vaccination",
-        )
-        axis.plot(
-            x,
             dataframe["Total fund - Optimal strategy"].to_numpy(),
             color="#D1495B",
             linestyle="-",
             linewidth=1.8,
             label="Total fund - optimal strategy",
         )
-        axis.set_title(f"{years}-year horizon", fontsize=9.5, pad=4)
+        title_color = "#D1495B" if years == 40 else "black"
+        title_size = 10.2 if years == 40 else 9.5
+        axis.set_title(
+            _scenario_title(years, index + 1),
+            fontsize=title_size,
+            color=title_color,
+            pad=4,
+        )
         apply_scientific_format(axis, x=False, y=True)
         apply_nature_style(fig, axis)
         if index == 0:
@@ -3149,7 +3194,14 @@ def _build_fig3(
             linestyle="--",
             label="No additional spending",
         )
-        axis.set_title(f"{years}-year horizon", fontsize=9.5, pad=4)
+        title_color = "#D1495B" if years == 40 else "black"
+        title_size = 10.2 if years == 40 else 9.5
+        axis.set_title(
+            _scenario_title(years, index + 1),
+            fontsize=title_size,
+            color=title_color,
+            pad=4,
+        )
         apply_scientific_format(axis, x=False, y=True)
         apply_nature_style(fig, axis)
         if index == 0:
@@ -3184,23 +3236,30 @@ def _build_fig3(
             med,
             color="#4D4D4D",
             linewidth=1.8,
-            label="Medical insurance",
+            label=f"Medical insurance ({TRIPARTY_MEDICAL_INSURANCE * 100:.2f}%)",
         )
         axis.plot(
             x,
             gov,
             color="#F28E2B",
             linewidth=1.8,
-            label="Government",
+            label=f"Government ({TRIPARTY_GOVERNMENT * 100:.2f}%)",
         )
         axis.plot(
             x,
             person,
             color="#4E79A7",
             linewidth=1.8,
-            label="Individual",
+            label=f"Individual ({TRIPARTY_INDIVIDUAL * 100:.2f}%)",
         )
-        axis.set_title(f"{years}-year horizon", fontsize=9.5, pad=4)
+        title_color = "#D1495B" if years == 40 else "black"
+        title_size = 10.2 if years == 40 else 9.5
+        axis.set_title(
+            _scenario_title(years, index + 1),
+            fontsize=title_size,
+            color=title_color,
+            pad=4,
+        )
         apply_scientific_format(axis, x=False, y=True)
         apply_nature_style(fig, axis)
         if index == 0:
@@ -3223,13 +3282,10 @@ def _build_fig3(
         if index >= 3:
             axis.set_xlabel("Calendar year", fontsize=9.5)
 
-    for axis in np.r_[axes_b[:3], axes_c[:3], axes_d[:3]]:
-        axis.tick_params(labelbottom=False)
-
     fig.text(
         0.5,
         max(axis.get_position().y1 for axis in axes_b[:3]) + 0.02,
-        "Budget impact under optimal vaccination strategies",
+        f"Budget impact under optimal vaccination strategies ({BUDGET_UNIT_LABEL})",
         ha="center",
         va="bottom",
         fontsize=11,
@@ -3237,7 +3293,8 @@ def _build_fig3(
     fig.text(
         0.5,
         max(axis.get_position().y1 for axis in axes_c[:3]) + 0.02,
-        "Incremental medical insurance expenditure under two co-payment schemes",
+        "Incremental medical insurance expenditure under two co-payment schemes "
+        f"({BUDGET_UNIT_LABEL})",
         ha="center",
         va="bottom",
         fontsize=11,
@@ -3245,26 +3302,32 @@ def _build_fig3(
     fig.text(
         0.5,
         max(axis.get_position().y1 for axis in axes_d[:3]) + 0.02,
-        "Cumulative vaccine financing under the multi-party funding strategy",
+        "Cumulative vaccine financing under the multi-party funding strategy "
+        f"({BUDGET_UNIT_LABEL})",
         ha="center",
         va="bottom",
         fontsize=11,
     )
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "figure_3.png"
-    fig.savefig(output_path, dpi=300, bbox_inches="tight")
-    method_output_path = (
-        output_dir / f"figure_3_{price_demand_method}_{plot_doses}dose.png"
+    output_path = _save_figure(fig, output_dir, "figure_3", image_format)
+    method_output_path = _figure_output_path(
+        output_dir,
+        f"figure_3_{price_demand_method}_{plot_doses}dose",
+        image_format,
     )
     if method_output_path != output_path:
-        fig.savefig(method_output_path, dpi=300, bbox_inches="tight")
+        save_kwargs: dict[str, object] = {"bbox_inches": "tight"}
+        if image_format in {"png", "tiff"}:
+            save_kwargs["dpi"] = 300
+        fig.savefig(method_output_path, **save_kwargs)
     plt.close(fig)
     return method_output_path
 
 
 def _build_figs1(
-    output_dir: Path, search_results: list[tuple[int, Path, SearchResult]]
+    output_dir: Path,
+    search_results: list[tuple[int, Path, SearchResult]],
+    image_format: str,
 ) -> Path:
     fig, axes = plt.subplots(
         3,
@@ -3404,15 +3467,15 @@ def _build_figs1(
     )
     apply_nature_style(fig, axes_flat)
     fig.tight_layout(rect=(0, 0, 1, 0.95))
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "figure_s1.png"
-    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    output_path = _save_figure(fig, output_dir, "figure_s1", image_format)
     plt.close(fig)
     return output_path
 
 
 def _build_figs2(
-    output_dir: Path, search_results: list[tuple[int, Path, SearchResult]]
+    output_dir: Path,
+    search_results: list[tuple[int, Path, SearchResult]],
+    image_format: str,
 ) -> Path:
     fig, axes = plt.subplots(3, 2, figsize=(8.6, 8.6), sharex=False)
     axes_flat = axes.flatten()
@@ -3492,9 +3555,7 @@ def _build_figs2(
         fontsize=8.5,
     )
     fig.tight_layout(rect=(0, 0, 1, 0.96))
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "figure_s2.png"
-    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    output_path = _save_figure(fig, output_dir, "figure_s2", image_format)
     plt.close(fig)
     return output_path
 
@@ -3503,6 +3564,7 @@ def _build_figs3(
     output_dir: Path,
     scenarios: list[tuple[int, Path]],
     rows: list[dict[str, object]],
+    image_format: str,
 ) -> Path:
     fig, axes = plt.subplots(3, 2, figsize=(13.2, 10.6), sharex=False, sharey=False)
     axes_flat = axes.flatten()
@@ -3568,9 +3630,7 @@ def _build_figs3(
     )
     apply_nature_style(fig, axes_flat)
     fig.tight_layout(rect=(0.09, 0, 1, 0.96))
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "figure_s3.png"
-    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    output_path = _save_figure(fig, output_dir, "figure_s3", image_format)
     plt.close(fig)
     return output_path
 
@@ -3578,6 +3638,7 @@ def _build_figs3(
 def _build_figs4(
     output_dir: Path,
     budget_sheets: list[tuple[int, pd.DataFrame]],
+    image_format: str,
 ) -> Path:
     fig, axes = plt.subplots(6, 2, figsize=(11.8, 15.2), sharex=False, sharey=False)
     treatment_color = "#2C7FB8"
@@ -3680,9 +3741,7 @@ def _build_figs4(
     )
     apply_nature_style(fig, axes_array.flatten())
     fig.tight_layout(rect=(0, 0, 1, 0.975))
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "figure_s4.png"
-    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    output_path = _save_figure(fig, output_dir, "figure_s4", image_format)
     plt.close(fig)
     return output_path
 
@@ -3690,6 +3749,7 @@ def _build_figs4(
 def _build_figs5(
     output_dir: Path,
     copay_sheets: list[tuple[int, pd.DataFrame]],
+    image_format: str,
 ) -> Path:
     fig, axes = plt.subplots(6, 2, figsize=(12.4, 15.2), sharex=False, sharey=False)
     axes_array = np.asarray(axes)
@@ -3779,9 +3839,7 @@ def _build_figs5(
     )
     apply_nature_style(fig, axes_array.flatten())
     fig.tight_layout(rect=(0, 0, 1, 0.975))
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "figure_s5.png"
-    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    output_path = _save_figure(fig, output_dir, "figure_s5", image_format)
     plt.close(fig)
     return output_path
 
@@ -3789,6 +3847,7 @@ def _build_figs5(
 def _build_figs6(
     output_dir: Path,
     triparty_sheets: list[tuple[int, pd.DataFrame]],
+    image_format: str,
 ) -> Path:
     fig, axes = plt.subplots(6, 3, figsize=(14.2, 15.8), sharex=False, sharey=False)
     axes_array = np.asarray(axes)
@@ -3919,9 +3978,7 @@ def _build_figs6(
     )
     apply_nature_style(fig, axes_array.flatten())
     fig.tight_layout(rect=(0, 0, 1, 0.975))
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "figure_s6.png"
-    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    output_path = _save_figure(fig, output_dir, "figure_s6", image_format)
     plt.close(fig)
     return output_path
 
@@ -3953,7 +4010,11 @@ def _run_tabs1(args: argparse.Namespace) -> None:
 def _run_fig2(args: argparse.Namespace) -> None:
     search_dirs = _discover_search_dirs(Path(args.results_root), args.results_glob)
     scenarios = [_build_fig2_scenario(search_dir) for search_dir in search_dirs]
-    output_path = _build_fig2(Path(args.output_dir), scenarios)
+    output_path = _build_fig2(
+        Path(args.output_dir),
+        scenarios,
+        args.image_format,
+    )
     print(f"Wrote {output_path}")
 
 
@@ -3999,6 +4060,7 @@ def _run_fig3(args: argparse.Namespace) -> None:
         plotted_doses,
         selected_price,
         price_demand_message,
+        args.image_format,
     )
     print(f"Wrote {output_path}")
 
@@ -4077,13 +4139,21 @@ def _run_price_demand(args: argparse.Namespace) -> None:
 
 def _run_figs1(args: argparse.Namespace) -> None:
     search_results = _load_search_results(Path(args.results_root), args.results_glob)
-    output_path = _build_figs1(Path(args.output_dir), search_results)
+    output_path = _build_figs1(
+        Path(args.output_dir),
+        search_results,
+        args.image_format,
+    )
     print(f"Wrote {output_path}")
 
 
 def _run_figs2(args: argparse.Namespace) -> None:
     search_results = _load_search_results(Path(args.results_root), args.results_glob)
-    output_path = _build_figs2(Path(args.output_dir), search_results)
+    output_path = _build_figs2(
+        Path(args.output_dir),
+        search_results,
+        args.image_format,
+    )
     print(f"Wrote {output_path}")
 
 
@@ -4121,11 +4191,7 @@ def _run_figs3(args: argparse.Namespace) -> None:
     output_dir = Path(args.output_dir)
     payload_path = _sensitivity_payload_path(args.sensitivity_path, output_dir)
     scenarios, rows = _load_sensitivity_payload(payload_path)
-    output_path = _build_figs3(
-        output_dir,
-        scenarios,
-        rows,
-    )
+    output_path = _build_figs3(output_dir, scenarios, rows, args.image_format)
     print(f"Wrote {output_path}")
 
 
@@ -4142,7 +4208,7 @@ def _run_budget(args: argparse.Namespace) -> None:
 def _run_figs4(args: argparse.Namespace) -> None:
     output_dir = Path(args.output_dir)
     budget_sheets = _load_budget_sheets(Path(args.budget_path))
-    output_path = _build_figs4(output_dir, budget_sheets)
+    output_path = _build_figs4(output_dir, budget_sheets, args.image_format)
     print(f"Wrote {output_path}")
 
 
@@ -4167,7 +4233,7 @@ def _run_copay(args: argparse.Namespace) -> None:
 def _run_figs5(args: argparse.Namespace) -> None:
     output_dir = Path(args.output_dir)
     copay_sheets = _load_copay_sheets(Path(args.copay_path))
-    output_path = _build_figs5(output_dir, copay_sheets)
+    output_path = _build_figs5(output_dir, copay_sheets, args.image_format)
     print(f"Wrote {output_path}")
 
 
@@ -4184,7 +4250,7 @@ def _run_triparty(args: argparse.Namespace) -> None:
 def _run_figs6(args: argparse.Namespace) -> None:
     output_dir = Path(args.output_dir)
     triparty_sheets = _load_triparty_sheets(Path(args.triparty_path))
-    output_path = _build_figs6(output_dir, triparty_sheets)
+    output_path = _build_figs6(output_dir, triparty_sheets, args.image_format)
     print(f"Wrote {output_path}")
 
 
@@ -4213,6 +4279,7 @@ def _run_all(args: argparse.Namespace) -> None:
         results_glob=args.results_glob,
         results_root=args.results_root,
         output_dir=str(output_dir),
+        image_format=args.image_format,
         model_config=args.model_config,
         sensitivity_path=str(sensitivity_path),
         budget_path=str(budget_path),
